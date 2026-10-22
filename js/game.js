@@ -3897,7 +3897,6 @@ function finishTurn() {
 const AI_RECRUIT_GOLD = 200;         // 징병에 투입하기 시작하는 최소 금
 const AI_MOVE_MIN = 500;             // 후방에서 최전선으로 넘길 최소 병력
 const AI_REAR_RESERVE = 1500;        // 후방 도시에 남겨 두는 병력
-const AI_TROOP_DEFICIT = 1.2;        // 세력 병력이 인접 적의 이 비율보다 적으면 열세
 
 // 최종 양강이 영구 동맹 때문에 멈추지 않게 한다. 반드시 3개월 전에 알린다.
 function campaignDiplomacy() {
@@ -3924,7 +3923,7 @@ function aiFrontline(fid, c) {
     return t && t.owner !== fid && !hasPeace(fid, t.owner);
   });
 }
-/* 세력 병력 ÷ 인접 적 병력 — 1 미만이면 수적으로 열세 */
+/* 동맹 원군 규모 판단에 쓰는 세력 병력 / 인접 적 병력. */
 function aiTroopRatio(fid, cities) {
   const own = {};
   let mine = 0, foe = 0;
@@ -4001,132 +4000,192 @@ function aiMovePlans(fid, cities) {
 }
 function aiLogisticsCap(fid,c) {
   const late=(G.turn||0)>=24 || factionCities(G.pf).length>=12;
-  return Math.floor(capOf(c)*(late && aiFrontline(fid,c)?2:1));
+  const mobilized=(G.factions[fid].quietMonths||0)>=4 && c.training>=75 && c.def>=65;
+  const economy=factionEconomy(fid),food=G.factions[fid].food;
+  const supplied=economy.foodNet>=0 || food>=Math.max(economy.foodUpkeep*4,-economy.foodNet*6);
+  return Math.floor(capOf(c)*((late||mobilized) && supplied && aiFrontline(fid,c)?2:1));
+}
+
+/* 다음 달 적의 출진까지 고려한다. 이번 달 행동 완료 여부로 국경 위협을 지우지 않는다. */
+function aiCityThreat(fid,c,exclude) {
+  const enemies=c.links.map(n=>G.cities[n]).filter(t=>t.owner!==fid&&!hasPeace(fid,t.owner)&&t.name!==exclude);
+  const forces=enemies.map(t=>Math.min(t.troops*.7,Math.max(1,officersIn(t.name).length)*10000)).sort((a,b)=>b-a);
+  return {enemies,incoming:(forces[0]||0)+(forces[1]||0)*.25};
+}
+function aiGarrisonReserve(fid,c,exclude) {
+  const threat=aiCityThreat(fid,c,exclude);
+  if(!threat.enemies.length)return AI_REAR_RESERVE;
+  const fortification=1+Math.max(0,c.def-50)*.006;
+  return Math.ceil(Math.max(1800,Math.min(capOf(c)*.35,3500),threat.incoming/fortification));
+}
+
+// 준비된 성은 모든 인접 적군을 각각 완벽하게 막으려다 영구 대치하지 않도록 일부 위험을 감수한다.
+function aiDepartureReserve(fid,c,exclude) {
+  return Math.ceil(Math.max(AI_REAR_RESERVE,c.troops*.3,Math.min(aiGarrisonReserve(fid,c,exclude),c.troops*.55)));
+}
+
+function aiRallyPlans(fid,ledger) {
+  const f=G.factions[fid];if((f.quietMonths||0)<4)return [];
+  const fronts=factionCities(fid).map(n=>G.cities[n]).filter(c=>aiFrontline(fid,c)&&c.def>=65&&c.training>=75&&officersIn(c.name).length>=2);
+  const score=c=>{
+    const targets=aiCityThreat(fid,c).enemies;
+    const weakest=targets.slice().sort((a,b)=>aiDefensePower(a)-aiDefensePower(b))[0];
+    return Math.min(aiLogisticsCap(fid,c),c.troops+c.links.filter(n=>G.cities[n].owner===fid).reduce((sum,n)=>sum+G.cities[n].troops*.4,0))-
+      (weakest?aiGarrisonReserve(fid,c,weakest.name)*.7+weakest.troops*.25:0);
+  };
+  const focus=fronts.sort((a,b)=>score(b)-score(a))[0];if(!focus)return [];
+  const distance={[focus.name]:0},queue=[focus.name],plans=[];
+  for(let i=0;i<queue.length;i++)for(const n of G.cities[queue[i]].links)if(G.cities[n].owner===fid&&distance[n]===undefined){distance[n]=distance[queue[i]]+1;queue.push(n);}
+  for(const src of factionCities(fid).map(n=>G.cities[n]).filter(c=>distance[c.name]>0&&c.training>=70&&c.morale>=70)) {
+    if(aiFrontline(fid,src)&&officersIn(src.name).length<2)continue;
+    if(ledger['move:'+src.name]||ledger['attack:'+src.name]||ledger['support:'+src.name]||!availableOfficers(src.name).length)continue;
+    const dst=src.links.map(n=>G.cities[n]).filter(c=>c.owner===fid&&distance[c.name]<distance[src.name]&&c.troops<aiLogisticsCap(fid,c)).sort((a,b)=>a.troops/aiLogisticsCap(fid,a)-b.troops/aiLogisticsCap(fid,b))[0];
+    if(!dst)continue;
+    const amount=Math.min(aiLogisticsCap(fid,dst)-dst.troops,Math.max(0,src.troops-aiDepartureReserve(fid,src)));
+    if(amount<AI_MOVE_MIN)continue;
+    plans.push({t:'move',cn:dst.name,from:src.name,troops:amount,safe:true,rally:true,score:130+Math.min(15,(f.quietMonths||0))-Math.min(12,distance[src.name]*3)});
+  }
+  return plans;
+}
+
+function aiAttackPlan(fid,c,pressure,ledger) {
+  if(!availableOfficers(c.name).length||c.troops<2800)return null;
+  const f=G.factions[fid],economy=factionEconomy(fid);
+  if(c.training<70||c.morale<70||c.def<60)return null;
+  const targets=c.links.map(n=>G.cities[n]).filter(t=>t.owner!==fid&&!hasPeace(fid,t.owner)&&
+    !(t.owner===G.pf&&!automatedFaction(t.owner)&&(G.turn||0)<GRACE_TURNS));
+  const priority=t=>t.name===f.warTarget?.city&&f.warTarget.until>G.turn;
+  const plans=[];
+  for(const target of targets) {
+    const reserve=aiDepartureReserve(fid,c,target.name);
+    const commit=Math.min(Math.floor(c.troops*.7),Math.max(0,c.troops-reserve));
+    if(commit<1000)continue;
+    const army=aiUnits(c.name,commit,{guard:true});if(!army.length)continue;
+    const defenders=defenseUnits(target.name),power=us=>us.reduce((s,u)=>s+unitPower(u,us,{opponents:defenders}),0);
+    const myP=power(army),defP=aiDefensePower(target,army),threshold=1.02+target.def/500-pressure*.22;
+    const extra=[];
+    if(myP<=defP*threshold&&(G.turn||0)>=12)for(const src of target.links.map(n=>G.cities[n]).filter(src=>
+      src.owner===fid&&src.name!==c.name&&src.training>=70&&src.morale>=70&&src.def>=60&&!(ledger['attack:'+src.name]||ledger['support:'+src.name]))) {
+      const spare=Math.min(Math.floor(src.troops*.4),Math.max(0,src.troops-Math.max(src.troops*.35,aiDepartureReserve(fid,src,target.name))));
+      const units=aiUnits(src.name,spare,{guard:true,limit:2});
+      const amount=units.reduce((s,u)=>s+u.troops,0);
+      if(amount>=500)extra.push({from:src.name,troops:amount,power:power(units)*.8});
+      if(extra.length>=2)break;
+    }
+    const ratio=(myP+extra.reduce((s,e)=>s+e.power,0))/Math.max(1,defP);
+    const total=army.reduce((s,u)=>s+u.troops,0)+extra.reduce((s,e)=>s+e.troops,0);
+    const supply=Math.ceil(total*12/600*expeditionRate({atk:fid,to:target.name},'atk'));
+    if(ratio<=threshold || f.food<Math.max(0,-economy.foodNet)+supply)continue;
+    plans.push({t:'attack',cn:c.name,target:target.name,troops:army.reduce((s,u)=>s+u.troops,0),extra,safe:true,
+      score:100+pressure*15+Math.min(35,(ratio-threshold)*35)+(priority(target)?12:0)});
+  }
+  return plans.sort((a,b)=>b.score-a.score)[0]||null;
+}
+
+/* 명령 하나가 끝날 때마다 새 상태로 후보를 평가한다. 보급·국경 복구를 먼저 하고 성장·출진을 고른다. */
+function aiActionCandidates(fid,ledger={}) {
+  const cities=factionCities(fid),f=G.factions[fid],economy=factionEconomy(fid),acts=[];
+  if(!cities.length)return acts;
+  const budget=Math.max(0,f.gold-Math.max(economy.goldUpkeep,120));
+  const foodStress=economy.foodNet<0&&f.food<Math.max(economy.foodUpkeep*3,-economy.foodNet*6);
+  const foodNeed=Math.max(economy.foodUpkeep*2,Math.max(0,-economy.foodNet)*4);
+  const add=a=>{const source=a.t==='move'?a.from:a.cn;a.score-=(ledger['city:'+source]||0)*12+(ledger[a.t+':'+source]||0)*16;acts.push(a);};
+  if(f.food<foodNeed&&(ledger.buy||0)<2) {
+    const cost=Math.min(600,Math.ceil((foodNeed-f.food)/FOOD_BUY_RATE),Math.max(0,f.gold-economy.goldUpkeep));
+    if(cost>=50)add({t:'buy',cn:cities[0],cost,score:f.food+economy.foodNet<0?220:foodStress?145:75});
+  }
+  const late=(G.turn||0)>=24||factionCities(G.pf).length>=12,pressure=Math.max(late?.65:0,Math.min(1,Math.max(0,(f.quietMonths||0)-3)/9));
+  for(const cn of cities) {
+    const c=G.cities[cn],available=availableOfficers(cn),threat=aiCityThreat(fid,c),front=threat.enemies.length>0;
+    if(!officersIn(cn).length) {
+      const donor=c.links.map(n=>G.cities[n]).find(src=>src.owner===fid&&availableOfficers(src.name).length>1);
+      if(donor)add({t:'relocate',cn,from:donor.name,score:195});
+    }
+    if(!available.length)continue;
+    const reserve=aiGarrisonReserve(fid,c),critical=front&&c.troops<reserve*.55;
+    const admin=pickSorted(cn,PICK_SCORE.admin)[0];
+    const develop=(stat,score)=>{const q=adminQuote(c,stat,[admin.name]);if(q.ok&&q.cost<=budget)add({t:'admin',cn,stat,score});};
+    if(c.order<65)develop('order',c.order<45?180:c.order<55?130:85);
+    const defenseTarget=front?(threat.incoming>c.troops?90:75):40;
+    if(c.def<defenseTarget)develop('def',front?(c.def<50?165:c.def<65?125:85)+(defenseTarget-c.def)*.15:45);
+    if(c.agri<100&&(foodStress||economy.foodNet<cities.length*12))develop('agri',foodStress?155:55+(100-c.agri)*.2);
+    if(c.comm<100&&economy.goldNet<cities.length*65)develop('comm',economy.goldNet<cities.length*25?135:70+(100-c.comm)*.2);
+    const trainTarget=front?(late?90:85):70,moraleTarget=front?85:75;
+    if(c.training<trainTarget||c.morale<moraleTarget) {
+      const deficit=Math.max(trainTarget-c.training,moraleTarget-c.morale);
+      add({t:'train',cn,score:(front?95:40)+deficit*.7+(front&&(c.training<60||c.morale<55)?30:0)});
+    }
+    const target=front?Math.min(capOf(c)*.95,Math.max(capOf(c)*.8,reserve)):capOf(c)*.3;
+    if(c.troops<target&&budget>=AI_RECRUIT_GOLD&&(!foodStress||critical)) {
+      const quality=front&&c.training>=80&&threat.incoming>=c.troops*.65&&budget>=600;
+      const mode=c.recruited||quality?'levy':'conscript';
+      const quote=recruitQuote(c,pickSorted(cn,PICK_SCORE.recruit)[0],mode,Math.min(budget,600));
+      const amount=Math.min(quote.amount,Math.ceil(target-c.troops));
+      if(quote.ok&&amount>=Math.min(200,capOf(c)-c.troops))add({t:'recruit',cn,amt:amount,mode,
+        score:critical?185:front?(c.troops<reserve?130:75):30});
+    }
+    if(!(ledger['attack:'+cn]||ledger['support:'+cn])) {const attack=aiAttackPlan(fid,c,pressure,ledger);if(attack)add(attack);}
+    const free=G.officers.filter(o=>o.city===cn&&((o.faction==='free'&&o.status==='active')||o.status==='pow'));
+    if(free.length&&!(ledger['hr:'+cn])&&budget>=300) {
+      const candidate=free.sort((a,b)=>PICK_SCORE.attack(b)-PICK_SCORE.attack(a))[0];
+      add({t:'hr',cn,name:candidate.name,score:officersIn(cn).length<2?120:35});
+    }
+    const low=officersIn(cn).filter(o=>!isLeader(o.name)&&o.loyalty<55).sort((a,b)=>a.loyalty-b.loyalty)[0];
+    if(low&&budget>=300)add({t:'reward',cn,name:low.name,score:low.loyalty<40?150:40});
+    if(c.order>=65&&!foodStress&&economy.goldNet>=cities.length*65) {
+      if(c.agri<90)develop('agri',35+(90-c.agri)*.2);
+      if(c.comm<90)develop('comm',35+(90-c.comm)*.2);
+    }
+  }
+  for(const move of aiMovePlans(fid,cities)) {
+    const src=G.cities[move.from],dst=G.cities[move.cn];
+    if(aiFrontline(fid,src)&&officersIn(src.name).length<2)continue;
+    if(ledger['move:'+src.name]||ledger['attack:'+src.name]||ledger['support:'+src.name]||!availableOfficers(src.name).length)continue;
+    const reserve=aiGarrisonReserve(fid,src),spare=Math.max(0,src.troops-reserve);
+    const troops=Math.min(move.troops,spare);if(troops<AI_MOVE_MIN)continue;
+    const deficit=aiGarrisonReserve(fid,dst)-dst.troops;
+    add({...move,troops,safe:true,score:aiFrontline(fid,dst)?(deficit>dst.troops?175:deficit>0?135:100+pressure*10):65});
+  }
+  for(const rally of aiRallyPlans(fid,ledger))add(rally);
+  return acts.sort((a,b)=>b.score-a.score||a.cn.localeCompare(b.cn)||a.t.localeCompare(b.t));
 }
 
 function runFactionAI(fid, done) {
-  if (!G || G.over || !G.factions[fid]) { done(); return; }
-  const game = G, epoch = campaignEpoch;
-  const cities = factionCities(fid);
-  if (!cities.length) { done(); return; }
-  const f = G.factions[fid];
-  // 유휴 개월이 길어질수록 우세만 기다리지 않고 대등한 전력으로도 공세를 준비한다.
-  f.quietMonths = (f.quietMonths || 0) + 1;
-  const late = (G.turn || 0) >= 24 || factionCities(G.pf).length >= 12;
-  const pressure = late ? Math.min(1, f.quietMonths / 6) : 0;
-  // 군량 부족으로 후반 병력이 계속 붕괴하는 악순환을 자기 예산의 매입으로 완화한다.
-  const economy = factionEconomy(fid);
-  const supplyNeed = Math.max(Math.max(0,-economy.foodNet)*3, economy.foodUpkeep*2);
-  const acts = [];
-  if(f.food< supplyNeed && f.gold>600) acts.push({t:'buy',cn:cities[0],cost:Math.min(600,Math.ceil((supplyNeed-f.food)/FOOD_BUY_RATE),Math.floor(f.gold-600))});
-  cities.filter(n=>!officersIn(n).length).forEach(n=>{
-    const donor=G.cities[n].links.map(c=>G.cities[c]).find(c=>c.owner===fid&&availableOfficers(c.name).length>1);
-    if(donor) acts.push({t:'relocate',cn:n,from:donor.name});
-  });
-  let budget = Math.max(0,f.gold-economy.goldUpkeep); // 다음 급료를 남기고 지출한다
-  const foodStress = economy.foodNet < 0 && f.food < Math.max(economy.foodUpkeep*3,-economy.foodNet*6);
-  // 충성도가 낮은 무장 포상 (수장 제외)
-  const low = officersOf(fid).filter(o => !isLeader(o.name) && o.loyalty < 55 && cities.indexOf(o.city) >= 0);
-  if (low.length && budget >= 300) { acts.push({ t: 'reward', cn: low[0].city, name: low[0].name }); budget -= 300; }
-  // 포로·재야 등용 시도
-  const cands = G.officers.filter(o => cities.indexOf(o.city) >= 0 &&
-    ((o.faction === 'free' && o.status === 'active') || o.status === 'pow'));
-  if (cands.length && budget > 500 && Math.random() < 0.35) {
-    const pick = cands.slice().sort((a, b) => (b.wu + b.zhi) - (a.wu + a.zhi))[0];
-    acts.push({ t: 'hr', cn: pick.city, name: pick.name });
-  }
-  // 적보다 병력이 적으면(원군 포함) 충원·집결을 최우선으로 한다
-  const urgent = aiTroopRatio(fid, cities) < AI_TROOP_DEFICIT;
-  const lacking = [];                        // 이번 달 징병으로도 부족한 최전선 도시
-  const campaignUsed = new Set();
-  cities.slice().sort(() => Math.random() - 0.5).forEach(cn => {
-    if(campaignUsed.has(cn)) return;
-    const c = G.cities[cn];
-    const offs = availableOfficers(cn).length;
-    if (!offs) return;
-    const front = aiFrontline(fid, c);
-    // 공격 판단 — 병력 30%는 방어용으로 남긴다
-    const targets = c.links.map(n => G.cities[n]).filter(t => t.owner !== fid && !hasPeace(fid, t.owner) &&
-      !(t.owner === G.pf && !automatedFaction(t.owner) && (G.turn || 0) < GRACE_TURNS));
-    if (targets.length && c.troops >= 2800) {
-      const priority=c=>c.name===f.warTarget?.city&&f.warTarget.until>G.turn;
-      const best = targets.slice().sort((a,b)=>Number(priority(b))-Number(priority(a))||aiDefensePower(a)-aiDefensePower(b))[0];
-      // 초반에는 플레이어를 공격하지 않는다 (준비 시간 확보)
-      const canHitPlayer = !(best.owner === G.pf && !automatedFaction(best.owner) && (G.turn || 0) < GRACE_TURNS);
-      const commit = Math.max(1000, Math.floor(c.troops * (0.7 + pressure * .15)));
-      const army=aiUnits(cn,commit);
-      const defenders=defenseUnits(best.name);
-      const myP = army.reduce((s,u)=>s+unitPower(u,army,{opponents:defenders}),0);
-      // 수비측은 전투 중 원군을 받으므로 그 잠재력까지 비교한다
-      const defP = aiDefensePower(best,army);
-      // 작은 국경 도시 한 곳의 병력 상한 때문에 대도시 공략이 영원히 막히지 않게 합동 공세를 편성한다.
-      const extra=late && myP<=defP*(1.15-pressure*.27) ? best.links.map(n=>G.cities[n]).filter(src=>
-        src.owner===fid && src.name!==cn && !campaignUsed.has(src.name) && src.troops>=2400 && officersIn(src.name).length)
-        .sort((a,b)=>b.troops-a.troops).slice(0,2).map(src=>({from:src.name,troops:Math.floor(src.troops*.4)})):[];
-      const support=extra.reduce((sum,e)=>{const units=aiUnits(e.from,e.troops);return sum+units.reduce((s,u)=>s+unitPower(u,units,{opponents:defenders}),0)*.85;},0);
-      if (canHitPlayer && myP+support > defP * (1.15-pressure*.27)) {
-        acts.push({ t:'attack',cn,target:best.name,troops:commit,extra });
-        campaignUsed.add(cn);extra.forEach(e=>campaignUsed.add(e.from));return;
-      }
-    }
-    // 보급 적자·낮은 치안을 해소하기 전에 병력만 계속 늘리지 않는다.
-    const admin = pickSorted(cn, PICK_SCORE.admin)[0];
-    const economicStat = c.order < 55 ? 'order' : foodStress && c.agri < 100 ? 'agri' :
-      economy.goldNet < cities.length*35 && c.comm < 100 ? 'comm' : null;
-    if (admin && economicStat) {
-      const quote = adminQuote(c,economicStat,[admin.name]);
-      if (quote.ok && quote.cost <= budget) {
-        acts.push({t:'admin',cn,stat:economicStat}); budget -= quote.cost; return;
-      }
-    }
-    // 병력 충원 — 열세이거나 최전선이면 상한에 가깝게 채운다
-    const fill = front ? (urgent ? 0.98 : 0.85) : (urgent ? 0.7 : 0.5);
-    if (!foodStress && c.troops < capOf(c) * fill && budget >= AI_RECRUIT_GOLD) {
-      const plan = aiRecruitPlan(c, budget);
-      if (plan) {
-        acts.push({ t: 'recruit', cn, amt: plan.amt });
-        budget -= plan.cost;
-        if (front && c.troops + plan.amt < capOf(c) * 0.9) lacking.push(cn);
-        return;
-      }
-    }
-    if (c.training < (late && front ? 92 : 78) || c.morale < 85) { acts.push({ t: 'train', cn }); return; }
-    const stats = ['agri', 'comm', 'def', 'order'].filter(s=>c[s]<100).sort((a, b) => c[a] - c[b]);
-    if (admin && stats.length) {
-      const quote = adminQuote(c,stats[0],[admin.name]);
-      if (quote.ok && quote.cost <= budget) { acts.push({ t: 'admin', cn, stat: stats[0] }); budget -= quote.cost; }
-    }
-  });
-  // 후방 잉여 병력을 최전선으로 집결 (이동)
-  // 병력 수송은 내정 행동 제한에 잘려 나가지 않게 먼저 처리한다.
-  acts.unshift(...aiMovePlans(fid, cities).filter(mv=>!campaignUsed.has(mv.from)));
-  // 금이 남아 있으면 최전선 도시를 한 번 더 징병한다
-  if (urgent && !foodStress) {
-    lacking.forEach(cn => {
-      const c = G.cities[cn];
-      if (!c || c.owner !== fid || budget < AI_RECRUIT_GOLD) return;
-      // 이번 달 이미 징병한 도시는 모병(두 배 비용)으로만 추가 충원한다
-      const plan = aiRecruitPlan(c, budget, 'levy');
-      if (!plan) return;
-      acts.push({ t: 'recruit', cn, amt: plan.amt });
-      budget -= plan.cost;
+  if (!G || G.over || !G.factions[fid] || !factionCities(fid).length) { done(); return; }
+  const game=G,epoch=campaignEpoch,f=G.factions[fid],ledger={},blocked=new Set();
+  f.quietMonths=(f.quietMonths||0)+1;
+  let attempts=0;
+  const limit=(factionCities(fid).length+2)*4+10;
+  const key=a=>[a.t,a.cn,a.stat||a.target||a.from||a.name||''].join(':');
+  const step=()=>{
+    if(G!==game||campaignEpoch!==epoch)return;
+    if(G.over){done();return;}
+    if(pauseAI(step))return;
+    if(aiCommands(fid)<=0||attempts++>=limit){done();return;}
+    const action=aiActionCandidates(fid,ledger).find(a=>!blocked.has(key(a)));
+    if(!action){done();return;}
+    const before=f.commands;
+    execAIAct(fid,action,()=>{
+      if(f.commands<before) {
+        const source=action.t==='move'?action.from:action.cn;
+        ledger['city:'+source]=(ledger['city:'+source]||0)+1;
+        ledger[action.t+':'+source]=(ledger[action.t+':'+source]||0)+1;
+        if(action.t==='buy')ledger.buy=(ledger.buy||0)+1;
+        if(action.t==='attack')for(const e of action.extra||[])ledger['support:'+e.from]=1;
+        blocked.clear();
+      } else blocked.add(key(action));
+      setTimeout(step,0);
     });
-  }
-  acts.length = Math.min(acts.length, cities.length + 2);
-  let i = 0;
-  const step = () => {
-    if (G !== game || campaignEpoch !== epoch) return;
-    if (G.over) { done(); return; }
-    if (pauseAI(step)) return;
-    if (i >= acts.length) { done(); return; }
-    execAIAct(fid, acts[i++], () => setTimeout(step, 0));
   };
   step();
 }
 
-function aiUnits(cn, troops) {
+function aiUnits(cn, troops, options={}) {
   const c = G.cities[cn];
-  const list = availableOfficers(cn).slice().sort((a, b) => PICK_SCORE.attack(b) - PICK_SCORE.attack(a)).slice(0, 5);
+  const officers=officersIn(cn);
+  const guards=officers.filter(o=>o.wu>=55||o.zhi>=65);
+  const guard=options.guard&&officers.length>1?(guards.length?guards:officers).slice().sort((a,b)=>PICK_SCORE.attack(a)-PICK_SCORE.attack(b))[0]:null;
+  const list = availableOfficers(cn).filter(o=>o!==guard).sort((a,b)=>PICK_SCORE.attack(b)-PICK_SCORE.attack(a)).slice(0,options.limit||5);
   const total = Math.min(list.length*10000,Math.max(0, Math.round(troops)));
   if (!list.length) return [];
   const counts = distribute(total, list.length);
@@ -4169,7 +4228,7 @@ function execAIAct(fid, a, cb) {
   }
   if (a.t === 'recruit') {
     // 징병은 도시당 한 달 한 번, 이후 충원은 모병(두 배 비용)으로 처리한다
-    const mode = c.recruited ? 'levy' : 'conscript';
+    const mode = c.recruited || a.mode==='levy' ? 'levy' : 'conscript';
     const o = pickSorted(c.name,PICK_SCORE.recruit)[0];
     if (o) {
       const budget = a.amt ? Math.min(f.gold,Math.ceil(a.amt*(mode==='levy'?LEVY_COST:RECRUIT_COST)-1e-9)) : f.gold;
@@ -4183,13 +4242,15 @@ function execAIAct(fid, a, cb) {
     const src = G.cities[a.from];
     if (!src || src.owner !== fid) { cb(); return; }
     if (!src.links.includes(c.name)) { cb(); return; }
-    const amt = Math.min(Math.round(a.troops || 0), Math.max(0,src.troops-AI_REAR_RESERVE), Math.max(0,aiLogisticsCap(fid,c)-c.troops));
+    const reserve=a.safe?(a.rally?aiDepartureReserve(fid,src):aiGarrisonReserve(fid,src)):AI_REAR_RESERVE;
+    const amt = Math.min(Math.round(a.troops || 0), Math.max(0,src.troops-reserve), Math.max(0,aiLogisticsCap(fid,c)-c.troops));
     const movers=availableOfficers(src.name).sort((x,y)=>y.wu-x.wu);
-    if (amt <= 0 || !movers.length) { cb(); return; }
+    // 최전선에는 수비 지휘관을 남긴다. 후방의 마지막 무장은 수송 후 다음 달 재배치할 수 있다.
+    const keep=a.safe&&aiFrontline(fid,src)?1:0;
+    const spare=a.safe?Math.min(2,movers.length,Math.max(0,officersIn(src.name).length-keep)):Math.min(2,Math.max(1,movers.length-1));
+    if(amt<=0||spare<=0){cb();return;}
     spend();
-    addGarrison(c,amt,src.training,src.morale); src.troops -= amt;
-    // 무장도 함께 이동 — 출발 도시에 최소 1명은 남긴다
-    const spare = Math.min(2, Math.max(1, movers.length - 1));
+    addGarrison(c,amt,src.training,src.morale);src.troops-=amt;
     movers.slice(0, spare).forEach(o => { o.city = c.name; o.used=true; });
     cb(); return;
   }
@@ -4209,8 +4270,9 @@ function execAIAct(fid, a, cb) {
     const t = G.cities[a.target];
     if (!t || t.owner === fid || hasPeace(fid, t.owner) || !c.links.includes(a.target)) { cb(); return; }
     if (t.owner === G.pf && !automatedFaction(t.owner) && (G.turn || 0) < GRACE_TURNS) { cb(); return; }
-    const commit = Math.min(a.troops || c.troops, c.troops);
-    const atkUnits = aiUnits(a.cn, commit);
+    const reserve=a.safe?aiDepartureReserve(fid,c,t.name):0;
+    const commit = Math.min(a.troops || c.troops, Math.max(0,c.troops-reserve));
+    const atkUnits = aiUnits(a.cn, commit,{guard:!!a.safe});
     const committed = atkUnits.reduce((s, u) => s + u.troops, 0);
     if (committed < 100) { cb(); return; }
     spend();markUsed(atkUnits.map(u=>u.officer?.name));
@@ -4220,11 +4282,13 @@ function execAIAct(fid, a, cb) {
     (a.extra||[]).forEach(e=>{
       const src=G.cities[e.from];
       if(!src || src.owner!==fid || !t.links.includes(src.name) || src.name===a.cn) return;
-      const amount=Math.min(e.troops,Math.max(0,src.troops-AI_REAR_RESERVE),Math.min(2,availableOfficers(src.name).length)*10000);
+      const reserve=a.safe?Math.max(src.troops*.35,aiDepartureReserve(fid,src,t.name)):AI_REAR_RESERVE;
+      const amount=Math.min(e.troops,Math.max(0,src.troops-reserve),Math.min(2,availableOfficers(src.name).length)*10000);
       if(amount<500 || !availableOfficers(src.name).length) return;
-      const units=aiUnits(src.name,amount).slice(0,2),counts=distribute(amount,units.length);
+      const units=aiUnits(src.name,amount,{guard:!!a.safe,limit:2});if(!units.length)return;
+      const actual=units.reduce((s,u)=>s+u.troops,0),counts=distribute(actual,units.length);
       units.forEach((u,i)=>{u.troops=counts[i];if(u.officer)ctx.home[u.officer.name]=src.name;});
-      markUsed(units.map(u=>u.officer?.name));src.troops-=amount;ctx.extra.push({from:src.name,units});
+      markUsed(units.map(u=>u.officer?.name));src.troops-=actual;ctx.extra.push({from:src.name,units});
     });
     if (t.owner === G.pf && !automatedFaction(t.owner)) {
       // 플레이어와의 전투 → 수비 편성 창을 띄운 뒤 전술 화면(플레이어가 수비)
@@ -4838,7 +4902,7 @@ const Game = {
   _debug: {
     newGame, applyBattleResult, autoResolve, defenseUnits, defenseUnitsFrom, defensePlan, defReinforceCandidates, aiUnits, runFactionAI,
     applyDefReinforce,aiFieldDefense,continueSiege,unitPower,aiDiplomacy,makePact,hasPeace,policyPlan,runPolicies,objectiveStatus,parseSaveFile,validateSave,cityAt,
-    aiMovePlans, execAIAct, aiDefensePower, aiFrontline, campaignDiplomacy,
+    aiMovePlans, execAIAct, aiDefensePower, aiFrontline, aiCityThreat, aiGarrisonReserve, aiDepartureReserve, aiRallyPlans, aiActionCandidates, aiAttackPlan, campaignDiplomacy,
     debutOfficers, syncOfficers, makeOfficer, visibleOfficers,
     distribute, cityGoldIncome, cityFoodIncome, cityFoodUpkeep, cityGoldUpkeep, capOf, factionEconomy,
     adminQuote, recruitQuote, aiRecruitPlan, monthlyProcess, addGarrison, buyFood, consumeBattleSupply, beginBattle, isLeader,

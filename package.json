@@ -6,6 +6,7 @@
     "test:browser": "node tools/agent_test.js",
     "test:audio": "node tools/audio_test.js",
     "test:balance": "node tools/balance_test.js --simulate --trials=64",
-    "test:siege-balance": "node tools/siege_balance_test.js"
+    "test:siege-balance": "node tools/siege_balance_test.js",
+    "test:ai-balance": "node tools/ai_balance_test.js --report --verify"
   }
 }
