@@ -12,6 +12,7 @@ window.GameAgent = (function () {
     if (!g) return null;
     return clone({
       year: g.year, month: g.month, turn: g.turn, scenario:g.scenario || '194', playerFaction: g.pf,
+      spectator: g.pf === null, fullDelegation: !!g.fullDelegation, autoPaused: !!g.autoPaused,
       commands: g.cmd, maxCommands: g.cmdMax, selectedCity: g.sel, over: g.over,
       factions: Object.values(g.factions),
       economy: factionEconomy(g.pf),
@@ -44,7 +45,7 @@ window.GameAgent = (function () {
     // 방어 편성 창은 AI 턴 도중에 뜨지만 플레이어(또는 에이전트)가 직접 조작해야 한다
     const defDeploy = !!(g && g.ui && g.ui.defDeploy);
     const waiting = !title && (b ? b.busy || b.auto || b.over : !!(g &&
-      ((g.ui && g.ui.attackIntro) || (g.aiRunning && !defDeploy))));
+      ((g.ui && g.ui.attackIntro) || (g.aiRunning && !g.autoPaused && !defDeploy))));
     const root = modal || (b ? document.getElementById('battleRoot') : document.getElementById('app'));
     const controls = [], actions = [];
     const currentTargets = new Map();
@@ -59,7 +60,7 @@ window.GameAgent = (function () {
       const label = el.labels && Array.from(el.labels).map(text).join(' ');
       const name = el.getAttribute('aria-label') || label || text(el) || el.title || el.id;
       const disabled = !!el.disabled || el.getAttribute('aria-disabled') === 'true' ||
-        (waiting && !['bAuto', 'bBgm', 'bSfx'].includes(el.id));
+        (waiting && !['bAuto', 'bBgm', 'bSfx', 'btnAutoPlay', 'btnTitle'].includes(el.id));
       const c = { id, type, name, disabled };
       if (el.id) c.domId = el.id;
       if (row) c.context = text(row);

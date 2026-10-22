@@ -18,6 +18,12 @@ const CombatRules = (() => {
   };
   function talent(u) { return unique[(u.officer || {}).name] || {}; }
   function strength(u) { const r=Math.max(0,u.troops)/3000; return Math.min(r,Math.sqrt(r)); }
+  // 방어도 0~50은 기존 보정 유지. 50 초과의 수복 투자에만 점진적인 추가 방호를 준다.
+  function cityDefenseMultiplier(value=0) {
+    const defense=Math.max(0,Math.min(100,Number.isFinite(value)?value:0));
+    const fortified=Math.max(0,defense-50)/50;
+    return 1+defense/400+.13*fortified*fortified;
+  }
   function counter(a,b) { return a==='기병'&&b==='궁병'?1.3:a==='궁병'&&b==='보병'||a==='보병'&&b==='기병'?1.2:1; }
   function bonuses(u, allies = [], nearby = allies) {
     const name=(u.officer||{}).name, names=new Set(allies.filter(a=>a.troops>=1000&&a.alive!==false).map(a=>(a.officer||{}).name));
@@ -40,7 +46,7 @@ const CombatRules = (() => {
   function damage(a,d,opt={}) {
     const ar=ratings(a,opt.alliesA,opt.nearbyA),dr=ratings(d,opt.alliesD,opt.nearbyD);
     const terrain=[1,1.15,1.25,1.4,1,1][opt.terrain||0]||1;
-    const defense=dr.defense*terrain*(1+(opt.cityDef||0)/400);
+    const defense=dr.defense*terrain*cityDefenseMultiplier(opt.cityDef);
     const raw=(ar.attack*counter(a.branch,d.branch)*.9-defense*.45)*34.5*(opt.random??1)*(opt.ranged?.85:1);
     return Math.max(1,Math.round(Math.max(90,raw)*strength(a)));
   }
@@ -48,9 +54,9 @@ const CombatRules = (() => {
     const r=ratings(u,allies),t=talent(u),o=u.officer||{};
     const opponents=(opt.opponents||[]).filter(x=>x.troops>0),total=opponents.reduce((s,x)=>s+x.troops,0);
     const matchup=total?opponents.reduce((s,x)=>s+x.troops*counter(u.branch,x.branch),0)/total:1;
-    return strength(u)*3000*(r.attack*matchup*.6+r.defense*.4*(1+(opt.cityDef||0)/400))/80*
+    return strength(u)*3000*(r.attack*matchup*.6+r.defense*.4*cityDefenseMultiplier(opt.cityDef))/80*
       (1+(o.zhi??50)/1000+(t.confuse||0)+(t.fire? .04:0));
   }
   function description(o) { const t=unique[o?.name];return t?t.label+': '+t.desc:''; }
-  return {strength,counter,damage,power,ratings,bonuses,talent,description,bonds,unique};
+  return {strength,cityDefenseMultiplier,counter,damage,power,ratings,bonuses,talent,description,bonds,unique};
 })();

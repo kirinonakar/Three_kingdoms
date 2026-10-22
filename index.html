@@ -115,6 +115,7 @@ main{flex:1;display:flex;min-height:0}
 #mapCanvas:active{cursor:grabbing}
 #attackIntro{position:fixed;inset:0;z-index:80;cursor:wait;display:flex;align-items:flex-end;justify-content:center;padding:24px;color:#f6eedb;font-weight:700;font-size:16px;text-shadow:0 2px 5px #000;background:linear-gradient(transparent 85%,#07100ce8);border-bottom:4px solid var(--attack-color)}
 #attackIntro[hidden]{display:none}
+#attackIntro.automated{pointer-events:none;cursor:default}
 #mapTools{
   position:absolute;right:22px;top:50%;transform:translateY(-50%);
   display:flex;flex-direction:column;gap:6px;align-items:center;z-index:2;
@@ -289,6 +290,8 @@ button.mycity .o.done{color:#6d7a70}
 /* ── 모달 ───────────────────────────────── */
 .modal-bg{position:fixed;inset:0;background:#040806cc;backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;animation:fade .15s ease-out}
 .modal-bg.top{z-index:120}
+.modal-bg.pick-preview{--pick-top:clamp(20px,8vh,80px);align-items:flex-start;padding-top:var(--pick-top)}
+.modal-bg.pick-preview .modal{max-height:min(88vh,calc(100dvh - var(--pick-top) - 20px))}
 .modal{
   position:relative;background:linear-gradient(180deg,#1c271f,#121a15);border:1px solid var(--line2);
   border-radius:16px;padding:22px 22px 18px;width:min(860px,94vw);max-height:88vh;overflow:auto;
@@ -537,6 +540,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
       <button id="btnLoad" class="ghost" onclick="Game.openLoad()" title="불러오기 (수동저장 3개 · 자동저장 3개)">불러오기</button>
       <button id="btnTitle" class="ghost" onclick="Game.toTitle()" title="타이틀 화면으로 돌아가기">타이틀로</button>
       <button id="btnPolicies" onclick="Game.openPolicies()">위임·목표</button>
+      <button id="btnAutoPlay" onclick="Game.toggleAutoPlay()" hidden>AI 자동 진행 일시정지</button>
       <button id="btnHelp" class="ghost" onclick="Game.openHelp()" title="도움말">도움말</button>
       <button id="btnEndTurn" class="primary" onclick="Game.endTurn()">턴 종료 <span class="arrow">▶</span></button>
     </div>

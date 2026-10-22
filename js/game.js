@@ -21,6 +21,65 @@ let hover = null;          // 마우스 오버 도시
 let cvM = null, ctxM = null;
 let attackIntro = null;
 let modalLocked = false;   // 타이틀 화면처럼 닫기(×·Esc)를 막아야 하는 창
+let autoPlayTimer = null;
+let campaignEpoch = 0;     // 타이틀 이동·새 게임·불러오기 전의 비동기 작업 무효화
+let pausedAI = null;       // 현재 달에서 중단한 AI 행동의 다음 단계
+
+function pauseAI(next) {
+  if (!G.autoPaused || !G.aiRunning || !(G.fullDelegation || !G.pf)) return false;
+  pausedAI = {game:G, epoch:campaignEpoch, next};
+  renderTop();
+  return true;
+}
+
+function automatedFaction(fid) { return !G.pf || (fid === G.pf && G.fullDelegation); }
+function clearAutoPlay() {
+  if (autoPlayTimer !== null) clearTimeout(autoPlayTimer);
+  autoPlayTimer = null;
+}
+function scheduleAutoPlay() {
+  clearAutoPlay();
+  if (!G || G.over || G.autoPaused || !(G.fullDelegation || !G.pf)) return;
+  const game = G, epoch = campaignEpoch;
+  autoPlayTimer = setTimeout(() => {
+    autoPlayTimer = null;
+    if (G !== game || campaignEpoch !== epoch || G.autoPaused || !strategyReady()) return;
+    endTurn();
+  }, 700);
+}
+function toggleAutoPlay() {
+  if (!G || G.over || !(G.fullDelegation || !G.pf)) return;
+  G.autoPaused = !G.autoPaused;
+  clearAutoPlay();
+  if (G.autoPaused && attackIntro && attackIntro.next) {
+    const next = attackIntro.next;
+    stopAttackIntro();
+    pauseAI(next);
+    drawMap();
+  }
+  if (!G.autoPaused) {
+    closeModal();
+    const pending = pausedAI; pausedAI = null;
+    if (pending && pending.game === G && pending.epoch === campaignEpoch) {
+      setTimeout(() => {
+        if (G === pending.game && campaignEpoch === pending.epoch && !pauseAI(pending.next)) pending.next();
+      }, 0);
+    } else if (!G.aiRunning) scheduleAutoPlay();
+  }
+  renderTop();
+  toast(G.autoPaused ? 'AI 자동 진행을 일시정지했습니다' : 'AI 자동 진행을 재개합니다');
+}
+function setFullDelegation(on) {
+  if (!strategyReady() || !G.pf) return;
+  G.fullDelegation = !!on;
+  G.autoPaused = false;
+  clearAutoPlay();
+  G.ui = {};
+  closeModal();
+  log(on ? '전체위임: 내정·외교·군사·전투와 월 진행을 AI에 맡깁니다.' : '전체위임을 해제하고 직접 지휘합니다.', 'good');
+  renderAll();
+  if (on) scheduleAutoPlay();
+}
 
 /* 사운드 헬퍼 — audio.js 가 없거나 초기화 전이어도 게임 진행에는 영향이 없다 */
 const sfx = n => { if (typeof Sound !== 'undefined' && Sound) Sound.sfx(n); };
@@ -61,7 +120,8 @@ function syncOfficers() {
 /* ── 상태 생성 ───────────────────────────────────────── */
 function newGame(pf, scenarioId = '194') {
   const scenario = scenarioById(scenarioId), cityDefs = scenarioCities(scenario);
-  if (!cityDefs.some(c=>c[4]===pf)) return;
+  if (pf !== null && !cityDefs.some(c=>c[4]===pf)) return;
+  clearAutoPlay(); pausedAI = null; campaignEpoch++;
   stopAttackIntro();
   const factionDefs = scenarioFactions(scenario);
   const factions = {}, cities = {}, officers = [];
@@ -96,7 +156,8 @@ function newGame(pf, scenarioId = '194') {
     year: scenario.year, month: scenario.month, scenario:scenario.id, leaders, pf,
     factions, cities, officers,
     cmd: 0, cmdMax: 0, log: [], sel: null, over: false, battleActive: false, ui: {},
-    turn: 0, ver: SAVE_VERSION, aiRunning: false
+    turn: 0, ver: SAVE_VERSION, aiRunning: false,
+    fullDelegation: false, autoPaused: false
   };
   if(scenario.rosters) assignScenarioRosters(scenario);      // 15군웅처럼 편성표를 직접 지정한 시나리오
   else if(scenario.owners) distributeScenarioOfficers(scenario);
@@ -110,11 +171,11 @@ function newGame(pf, scenarioId = '194') {
   stopZoomAnim();                                 // 진행 중인 확대 애니메이션 정리
   refreshCmd(true);
   log('『' + scenario.name + '』 천하가 다시 군웅의 시대로 접어들었다.', 'sep');
-  log(G.factions[pf].name + ' 세력이 천하에 깃발을 세웠다. 도시 ' + factionCities(pf).length + '개, 금 ' + commas(G.factions[pf].gold) + '.', 'good');
+  log(pf ? G.factions[pf].name + ' 세력이 천하에 깃발을 세웠다. 도시 ' + factionCities(pf).length + '개, 금 ' + commas(G.factions[pf].gold) + '.' : 'AI 관전: 모든 세력이 AI의 지휘로 천하통일을 겨룹니다.', 'good');
 }
 
 function refreshCmd(full) {
-  G.cmdMax = factionCities(G.pf).length + 2;
+  G.cmdMax = G.pf ? factionCities(G.pf).length + 2 : 0;
   if (full) {
     G.cmd = G.cmdMax;
     // 새 달에는 모든 무장이 다시 명령을 수행할 수 있다
@@ -359,7 +420,7 @@ function boot() {
     setZoom(viewGoal.scale * 1.6, p.x, p.y);
   });
   document.addEventListener('keydown', e => {
-    if (attackIntro) { e.preventDefault(); return; }
+    if (attackIntro && !(e.target && ['btnAutoPlay','btnTitle'].includes(e.target.id))) { e.preventDefault(); return; }
     if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.matches('[role="button"]')) {
       e.preventDefault(); e.target.click(); return;
     }
@@ -433,6 +494,7 @@ function startScreen() {
     SCENARIOS.map(s=>'<option value="'+s.id+'"'+(s.id===scenario.id?' selected':'')+'>'+s.name+'</option>').join('')+'</select>' +
     '<p class="muted scenario-desc">'+scenario.desc+'</p>' +
     startSaveRows() +
+    '<button class="frow" onclick="Game.startSpectator(\'' + scenario.id + '\')"><b>전체 AI 관전</b><span class="muted">세력 선택 없이 모든 세력을 AI에 맡깁니다</span></button>' +
     rows +
     '<div class="foot"><button onclick="Game.openHelp()">게임 방법</button></div>', { closable: false });
 }
@@ -449,7 +511,7 @@ function renderAll() {
 
 function renderTop() {
   if (!$('dateInfo')) return;
-  const f = G.factions[G.pf];
+  const f = G.factions[G.pf] || {name:'전체 AI 관전',color:'transparent',gold:0,food:0};
   $('dateInfo').textContent = G.year + '년 ' + G.month + '월';
   /* 세력 표시 — 이름 앞에 세력색 점을 함께 보여 준다 */
   const facName = $('facName') || $('facInfo');
@@ -466,8 +528,16 @@ function renderTop() {
   $('cityInfo').textContent = factionCities(G.pf).length + ' / ' + Object.keys(G.cities).length;
   const busy = !!G.aiRunning || !!attackIntro;
   ['btnSave', 'btnLoad', 'btnOfficers', 'btnDiplo', 'btnPolicies'].forEach(id => { const el = $(id); if (el) el.disabled = busy; });
+  if ($('btnDiplo')) $('btnDiplo').disabled = busy || !G.pf || G.fullDelegation;
+  if ($('btnOfficers')) $('btnOfficers').disabled = busy && !G.autoPaused;
+  const auto = $('btnAutoPlay');
+  if (auto) {
+    auto.hidden = !(G.fullDelegation || !G.pf);
+    auto.disabled = !!G.over;
+    auto.textContent = G.autoPaused ? 'AI 자동 진행 재개' : 'AI 자동 진행 일시정지';
+  }
   const b = $('btnEndTurn');
-  if (b) b.disabled = !!G.over || busy;
+  if (b) b.disabled = !!G.over || busy || G.fullDelegation || !G.pf;
 }
 
 function hexA(hex, a) {
@@ -1581,10 +1651,12 @@ function playAttackIntro(ctx, next) {
   }
   const faction = G.factions[ctx.atk], app = $('app'), banner = $('attackIntro');
   const intro = attackIntro = { game: G, from, to, color: faction.color,
-    progress: 0, started: null, raf: 0, wasInert: !!(app && app.inert) };
+    progress: 0, started: null, raf: 0, wasInert: !!(app && app.inert), next };
   G.ui.attackIntro = { from: ctx.from, to: ctx.to, faction: ctx.atk };
-  if (app) app.inert = true;
+  const automated = G.fullDelegation || !G.pf;
+  if (app) app.inert = !automated;
   if (banner) {
+    banner.classList.toggle('automated', !!automated);
     banner.style.setProperty('--attack-color', faction.color);
     banner.textContent = faction.name + '군 출진 · ' + ctx.from + ' → ' + ctx.to;
     banner.hidden = false;
@@ -1599,7 +1671,7 @@ function playAttackIntro(ctx, next) {
     if (elapsed >= 1120) {
       stopAttackIntro();
       renderTop(); drawMap();
-      next();
+      if (!pauseAI(next)) next();
       return;
     }
     intro.raf = requestAnimationFrame(frame);
@@ -1767,7 +1839,7 @@ function renderCityPanel() {
   const el = $('cityPanel'); if (!el) return;
   if (!G.sel) {
     /* 지도 빈 곳을 클릭하면 보유 도시 목록을 보여 주고 그 자리에서 선택할 수 있게 한다 */
-    const mine = factionCities(G.pf);
+    const mine = G.pf ? factionCities(G.pf) : Object.keys(G.cities);
     const cityRows = mine.map(n => {
       const c = G.cities[n], cf = G.factions[c.owner] || {};
       const offs = officersIn(n), avail = offs.filter(o => !o.used).length;
@@ -1782,13 +1854,13 @@ function renderCityPanel() {
     }).join('');
     el.innerHTML = '<div class="empty">' +
       '<div class="empty-seal">令</div>' +
-      '<h3>명령을 내릴 도시를 선택하세요</h3>' +
-      '<p class="muted">지도에서 도시를 클릭하거나 아래 목록에서 내 도시를 고르세요.<br>지도 빈 곳을 클릭하면 이 목록이 나타납니다.</p>' +
+      '<h3>' + (G.pf ? '명령을 내릴 도시를 선택하세요' : '관전할 도시를 선택하세요') + '</h3>' +
+      '<p class="muted">' + (G.pf ? '지도에서 도시를 클릭하거나 아래 목록에서 내 도시를 고르세요.<br>지도 빈 곳을 클릭하면 이 목록이 나타납니다.' : '모든 세력이 AI의 지휘로 행동합니다. 지도나 아래 목록에서 도시 현황을 살펴볼 수 있습니다.') + '</p>' +
       '<div class="empty-stats">' +
         '<div class="chip"><span class="k">명령권</span><b>' + G.cmd + ' / ' + G.cmdMax + '</b></div>' +
         '<div class="chip"><span class="k">보유 도시</span><b>' + mine.length + ' / ' + Object.keys(G.cities).length + '</b></div>' +
       '</div>' +
-      '<div class="mylist"><div class="mylist-h"><span>보유 도시 · 바로 선택</span><b>' + mine.length + '곳</b></div>' +
+      '<div class="mylist"><div class="mylist-h"><span>' + (G.pf ? '보유 도시' : '전체 도시') + ' · 바로 선택</span><b>' + mine.length + '곳</b></div>' +
         (cityRows || '<p class="muted">보유 도시가 없습니다.</p>') +
       '</div>' +
       '<p class="legend">도시에 마우스를 올리면 상세 정보가 표시됩니다. 인접 도시 이름을 눌러 바로 이동할 수 있습니다. [이동] 명령 중에는 지도에서 목적지 도시를 클릭해 고를 수 있습니다.</p>' +
@@ -1808,9 +1880,9 @@ function renderCityPanel() {
   let h = '<div class="city-head">' +
     '<div class="city-title"><span class="dot" style="background:' + (f ? f.color : '#8b9a8e') + '"></span>' +
     '<h3>' + c.name + '</h3><span class="fac-chip">' + (f ? f.name : '재야') + '</span><span class="fac-chip" title="인구 9만 미만: 소 · 9만 이상: 중 · 14만 이상: 대">' + citySize(c).label + '</span></div>' +
-    '<span class="badge ' + (mine ? 'mine' : ally ? 'ally' : 'foe') + '">' + (mine ? '내 도시' : ally ? '동맹국 도시' : '적 도시') + '</span></div>';
+    '<span class="badge ' + (mine ? 'mine' : ally ? 'ally' : 'foe') + '">' + (!G.pf ? 'AI 운영 도시' : mine ? '내 도시' : ally ? '동맹국 도시' : '적 도시') + '</span></div>';
   /* 좌측 열: 도시 현황 */
-  let colA = '<p class="muted">'+objectiveStatus().label+'</p><p class="muted">위임: '+(CITY_POLICIES[c.policy]||CITY_POLICIES.manual)+'</p><div class="cmdline"><span>명령권</span><b>' + G.cmd + ' / ' + G.cmdMax + '</b></div>';
+  let colA = '<p class="muted">'+objectiveStatus().label+'</p><p class="muted">위임: '+(!G.pf || G.fullDelegation ? '전체위임 · AI 운영' : CITY_POLICIES[c.policy]||CITY_POLICIES.manual)+'</p><div class="cmdline"><span>명령권</span><b>' + G.cmd + ' / ' + G.cmdMax + '</b></div>';
   colA += '<div class="statlist">' + [['agri', '농업'], ['comm', '상업'], ['def', '방어'], ['order', '치안']].map(([k, label]) =>
     '<div class="srow"><span class="k">' + label + '</span><div class="bar"><i class="barfill ' + k + '" style="width:' + c[k] + '%"></i></div><b class="v">' + c[k] + '</b></div>'
   ).join('') + '</div>';
@@ -1860,7 +1932,7 @@ function renderCityPanel() {
       '<span class="dot" style="background:' + (df ? df.color : '#8b9a8e') + '"></span>' +
       '<span class="n">' + n + (isAlly(G.pf, d.owner) ? ' · 동맹국' : '') + '</span><span class="t">' + commas(d.troops) + '</span></span>';
   }).join('') + '</div>';
-  const noCmd = G.cmd <= 0;
+  const noCmd = G.cmd <= 0 || G.aiRunning || G.fullDelegation;
   const noOff = offs.length === 0;
   // 이 도시 밖에서 아직 명령할 수 있는 내 도시 (명령권이 없으면 소용없으므로 제외)
   const otherReady = noCmd ? [] : factionCities(G.pf).filter(n => n !== c.name && availableOfficers(n).length);
@@ -1892,7 +1964,8 @@ function renderCityPanel() {
         colB += '<p class="warn">모든 무장이 이번 달 명령을 마쳤습니다. 포상·군량 매입·매각을 하거나 [턴 종료]로 다음 달로 넘어가세요.</p>';
       }
     }
-    if (noCmd) colB += '<p class="warn">명령권이 없습니다. [턴 종료]로 다음 달로 넘어가세요.</p>';
+    if (G.fullDelegation) colB += '<p class="muted">전체위임 중입니다. 직접 명령하려면 [위임·목표]에서 전체위임을 해제하세요.</p>';
+    else if (noCmd) colB += '<p class="warn">명령권이 없습니다. [턴 종료]로 다음 달로 넘어가세요.</p>';
     const groups = [
       ['내정', [['agri', '田', '개발'], ['comm', '商', '상업'], ['order', '安', '치안'], ['def', '修', '수복']]],
       ['군사', [['recruit', '兵', '징병'], ['levy', '募', '모병'], ['train', '訓', '훈련'], ['move', '移', '이동'], ['attack', '攻', '출진']]],
@@ -1995,12 +2068,15 @@ function selectCity(name) {
 /* ── 모달 ────────────────────────────────────────────── */
 function showModal(html, opts) {
   const m = $('modalRoot'); if (!m) return;
+  if (G && !G.over && (G.fullDelegation || !G.pf)) {
+    G.autoPaused = true; clearAutoPlay(); renderTop();
+  }
   const titleMode = !!(document.body && document.body.classList.contains('title'));
   // opts.closable:false → 닫기(×) 없는 창. 타이틀 화면 자체와 그 위에 띄운 창도 닫기 버튼을 두지 않는다.
   const closable = !!G && !(opts && opts.closable === false) && !titleMode;
   const top = !!(G && G.battleActive);          // 전투 중에는 전장 위로 띄운다
   modalLocked = !!(opts && opts.closable === false);
-  m.innerHTML = '<div class="modal-bg' + (top ? ' top' : '') + '"' + (closable ? ' onclick="if(event.target===this)Game.closeModal()"' : '') + '>' +
+  m.innerHTML = '<div class="modal-bg' + (top ? ' top' : '') + (opts && opts.pickPreview ? ' pick-preview' : '') + '"' + (closable ? ' onclick="if(event.target===this)Game.closeModal()"' : '') + '>' +
     '<div class="modal" role="dialog" aria-modal="true">' +
     (closable ? '<button class="mclose" type="button" aria-label="닫기" onclick="Game.closeModal()">×</button>' : '') +
     html + '</div></div>';
@@ -2069,7 +2145,7 @@ function renderPick() {
       (p.battle ? ' · 원군 파견 무장' : ' · 효과가 높은 순서로 정렬 · 이번 달 미행동 무장만 표시') + ')</p>' +
     rows + (p.preview ? '<p id="pickPreview" class="command-preview" aria-live="polite"></p>' : '') +
     '<div class="foot"><button onclick="Game.closeModal()">취소</button>' +
-    '<button class="primary" id="pickOk" onclick="Game.confirmPick()">확인</button></div>');
+    '<button class="primary" id="pickOk" onclick="Game.confirmPick()">확인</button></div>', { pickPreview: !!p.preview });
   p.shown = true;
   syncPick();
 }
@@ -2100,6 +2176,7 @@ function confirmPick() {
 
 /* ── 명령권 ──────────────────────────────────────────── */
 function needCmd() {
+  if (!G.pf || G.fullDelegation || G.aiRunning) return false;
   if (G.over) return false;
   if (G.cmd <= 0) { toast('명령권이 부족합니다. [턴 종료]로 다음 달로 넘어가세요'); return false; }
   return true;
@@ -3633,6 +3710,7 @@ function doReward(name) {
 /* ── 외교 ────────────────────────────────────────────── */
 function openDiplo() {
   if (!G) { toast('먼저 세력을 선택하세요'); return; }
+  if (!G.pf || G.fullDelegation) return;
   const f = G.factions[G.pf];
   const mine = factionTotals(G.pf);
   /* 도시 · 병력 · 금 · 군량을 세력마다 같은 형식으로 표시 */
@@ -3716,7 +3794,18 @@ function startNew(fid, scenarioId = chosenScenario) {
   if (cs.length) selectCity(cs[0]);
   toast('새 게임 시작: ' + G.factions[fid].name + ' 세력');
 }
+function startSpectator(scenarioId = chosenScenario) {
+  const scenario = scenarioById(scenarioId);
+  closeModal(); setTitleMode(false); bgm('map'); sfx('success');
+  chosenScenario = scenario.id;
+  newGame(null, scenario.id);
+  G.sel = Object.keys(G.cities)[0];
+  renderAll();
+  toast('전체 AI 관전을 시작합니다');
+  scheduleAutoPlay();
+}
 function reset() {
+  clearAutoPlay(); pausedAI = null; campaignEpoch++;
   stopAttackIntro();
   closeModal();
   G = null;
@@ -3728,6 +3817,9 @@ function reset() {
   startScreen();
 }
 function toTitle() {
+  clearAutoPlay(); pausedAI = null; campaignEpoch++;
+  stopAttackIntro();
+  if (G) G.autoPaused = true;
   closeModal();
   startScreen();
 }
@@ -3749,12 +3841,20 @@ function renderTopSafe() {
 /* ── 턴 종료 → AI 행동 → 월간 정산 ──────────────────── */
 function endTurn() {
   if (!G) { toast('먼저 세력을 선택하세요'); return; }
+  if (G.autoPaused && (G.fullDelegation || !G.pf)) return;
   if (attackIntro) return;
   if (G.over) return;
   if (G.battleActive) { toast('전투가 진행 중입니다'); return; }
   if (G.aiRunning) { toast('AI 세력이 행동 중입니다'); return; }
-  runPolicies();
-  if (G.cmd > 0) log('명령권 ' + G.cmd + '개가 소멸합니다.', '');
+  clearAutoPlay();
+  const game = G, epoch = campaignEpoch;
+  const delegated = !!G.pf && G.fullDelegation;
+  if (!delegated && G.pf) runPolicies();
+  if (!delegated && G.cmd > 0) log('명령권 ' + G.cmd + '개가 소멸합니다.', '');
+  if (delegated) {
+    const f = G.factions[G.pf];
+    f.commandTurn = G.turn; f.commands = G.cmd;
+  }
   G.ui.move = null; G.ui.attack = null; syncMoveHint();
   closeModal();
   G.cmd = 0;
@@ -3763,12 +3863,14 @@ function endTurn() {
   campaignDiplomacy();
   sfx('turn');
   renderTop(); renderCityPanel();
-  log('— ' + G.factions[G.pf].name + ' 세력의 명령이 끝났습니다 —', 'sep');
+  log(G.pf ? '— ' + G.factions[G.pf].name + (delegated ? ' 세력 전체위임 —' : ' 세력의 명령이 끝났습니다 —') : '— 전체 AI 세력 행동 —', 'sep');
   const ids = Object.keys(G.factions).filter(id => id !== G.pf && factionCities(id).length);
+  if (delegated) ids.unshift(G.pf);
   let i = 0;
   const next = () => {
-    if (!G) return;
+    if (G !== game || campaignEpoch !== epoch) return;
     if (G.over) { G.aiRunning = false; renderTop(); return; }
+    if (pauseAI(next)) return;
     if (i >= ids.length) { finishTurn(); return; }
     const fid = ids[i++];
     runFactionAI(fid, () => setTimeout(next, 30));
@@ -3788,6 +3890,7 @@ function finishTurn() {
   saveGame(true);
   victoryCheck();
   toast(G.year + '년 ' + G.month + '월 — 명령권 ' + G.cmd + '개');
+  scheduleAutoPlay();
 }
 
 /* ── AI 세력 행동 ────────────────────────────────────── */
@@ -3801,14 +3904,15 @@ function campaignDiplomacy() {
   if((G.turn||0)<24) return;
   const living=Object.keys(G.factions).filter(fid=>factionCities(fid).length);
   if(living.length!==2) return;
-  const rival=living.find(fid=>fid!==G.pf), f=G.factions[rival];
-  if(!f || f.vassalTo===G.pf || !isAlly(rival,G.pf)) return;
+  const partner = G.pf || living[0];
+  const rival=living.find(fid=>fid!==partner), f=G.factions[rival];
+  if(!f || f.vassalTo===partner || !isAlly(rival,partner)) return;
   if(!f.pactWarning) {
-    f.pactWarning={target:G.pf,until:(G.turn||0)+3};
+    f.pactWarning={target:partner,until:(G.turn||0)+3};
     log(f.name+'이(가) 천하의 패권을 요구합니다. 3개월 뒤 동맹을 종료하겠다고 통보했습니다.','war');
   } else if((G.turn||0)>=f.pactWarning.until) {
-    delete f.ally[G.pf];delete G.factions[G.pf].ally[rival];delete f.pactWarning;
-    f.rel[G.pf]=-35;G.factions[G.pf].rel[rival]=-35;
+    delete f.ally[partner];delete G.factions[partner].ally[rival];delete f.pactWarning;
+    f.rel[partner]=-35;G.factions[partner].rel[rival]=-35;
     log(f.name+'와의 동맹이 예고대로 끝났습니다. 천하를 건 마지막 전선이 열립니다.','war');
   }
 }
@@ -3902,6 +4006,7 @@ function aiLogisticsCap(fid,c) {
 
 function runFactionAI(fid, done) {
   if (!G || G.over || !G.factions[fid]) { done(); return; }
+  const game = G, epoch = campaignEpoch;
   const cities = factionCities(fid);
   if (!cities.length) { done(); return; }
   const f = G.factions[fid];
@@ -3942,12 +4047,12 @@ function runFactionAI(fid, done) {
     const front = aiFrontline(fid, c);
     // 공격 판단 — 병력 30%는 방어용으로 남긴다
     const targets = c.links.map(n => G.cities[n]).filter(t => t.owner !== fid && !hasPeace(fid, t.owner) &&
-      !(t.owner === G.pf && (G.turn || 0) < GRACE_TURNS));
+      !(t.owner === G.pf && !automatedFaction(t.owner) && (G.turn || 0) < GRACE_TURNS));
     if (targets.length && c.troops >= 2800) {
       const priority=c=>c.name===f.warTarget?.city&&f.warTarget.until>G.turn;
       const best = targets.slice().sort((a,b)=>Number(priority(b))-Number(priority(a))||aiDefensePower(a)-aiDefensePower(b))[0];
       // 초반에는 플레이어를 공격하지 않는다 (준비 시간 확보)
-      const canHitPlayer = !(best.owner === G.pf && (G.turn || 0) < GRACE_TURNS);
+      const canHitPlayer = !(best.owner === G.pf && !automatedFaction(best.owner) && (G.turn || 0) < GRACE_TURNS);
       const commit = Math.max(1000, Math.floor(c.troops * (0.7 + pressure * .15)));
       const army=aiUnits(cn,commit);
       const defenders=defenseUnits(best.name);
@@ -4010,9 +4115,11 @@ function runFactionAI(fid, done) {
   acts.length = Math.min(acts.length, cities.length + 2);
   let i = 0;
   const step = () => {
-    if (!G || G.over) { done(); return; }
+    if (G !== game || campaignEpoch !== epoch) return;
+    if (G.over) { done(); return; }
+    if (pauseAI(step)) return;
     if (i >= acts.length) { done(); return; }
-    execAIAct(fid, acts[i++], step);
+    execAIAct(fid, acts[i++], () => setTimeout(step, 0));
   };
   step();
 }
@@ -4101,7 +4208,7 @@ function execAIAct(fid, a, cb) {
   if (a.t === 'attack') {
     const t = G.cities[a.target];
     if (!t || t.owner === fid || hasPeace(fid, t.owner) || !c.links.includes(a.target)) { cb(); return; }
-    if (t.owner === G.pf && (G.turn || 0) < GRACE_TURNS) { cb(); return; }
+    if (t.owner === G.pf && !automatedFaction(t.owner) && (G.turn || 0) < GRACE_TURNS) { cb(); return; }
     const commit = Math.min(a.troops || c.troops, c.troops);
     const atkUnits = aiUnits(a.cn, commit);
     const committed = atkUnits.reduce((s, u) => s + u.troops, 0);
@@ -4119,7 +4226,7 @@ function execAIAct(fid, a, cb) {
       units.forEach((u,i)=>{u.troops=counts[i];if(u.officer)ctx.home[u.officer.name]=src.name;});
       markUsed(units.map(u=>u.officer?.name));src.troops-=amount;ctx.extra.push({from:src.name,units});
     });
-    if (t.owner === G.pf) {
+    if (t.owner === G.pf && !automatedFaction(t.owner)) {
       // 플레이어와의 전투 → 수비 편성 창을 띄운 뒤 전술 화면(플레이어가 수비)
       ctx.after = cb;
       log('⚔ ' + f.name + '군이 ' + t.name + '으로 출진했습니다!', 'war');
@@ -4284,6 +4391,13 @@ function monthlyEvents() {
 /* ── 승리/패배 판정 ──────────────────────────────────── */
 function victoryCheck() {
   if (!G || G.over) return;
+  if (!G.pf) {
+    const winner = Object.keys(G.factions).find(id => factionCities(id).length === Object.keys(G.cities).length);
+    if (!winner) return;
+    G.over = true; clearAutoPlay(); sfx('victory'); renderTop();
+    showModal('<h2>천하통일!</h2><p style="text-align:center">' + G.year + '년 ' + G.month + '월 — ' + G.factions[winner].name + '이(가) 모든 도시를 통일했습니다!</p><div class="foot"><button class="primary" onclick="Game.reset()">새 게임</button></div>');
+    return;
+  }
   const mine = factionCities(G.pf).length;
   const total = Object.keys(G.cities).length;
   if (mine === 0) {
@@ -4445,6 +4559,7 @@ function refreshOfficers() {
   return true;
 }
 function openOfficers(all) {
+  if (G && !G.pf) all = true;
   if (!G) { toast('먼저 세력을 선택하세요'); return; }
   offAllView = !!all;                              // 정렬 버튼이 현재 보기를 알 수 있게
   if (refreshOfficers()) return;                   // 이미 열려 있으면 제자리 갱신만
@@ -4463,13 +4578,14 @@ function openHelp() {
     '<p><b>목표</b> : 기본 목표는 모든 도시 점령입니다. 새 게임 첫 명령 전 [위임·목표] → [승리 목표]에서 패권·24개월 도전·시나리오 목표도 선택할 수 있습니다.</p>' +
     '<p><b>야전과 공성</b> : 출진 편성의 [공략 방식]에서 야전 선행 / 바로 공성 / 수비군 판단을 고릅니다. 수비 편성에서는 [수비 방침]으로 야전 요격 또는 농성을 선택합니다. 야전에서 수비군이 이기면 침공을 막습니다. 공격군 승리 또는 [성으로 후퇴] 시 생존 부대와 예비 병력으로 공성을 이어가며, 군량은 누적 차감됩니다. 수비 병력이 전멸하고 예비 병력도 없으면 바로 점령합니다.</p>' +
     '<p><b>도시 위임</b> : [위임·목표]에서 농업·상업·군사·최전선·후방 지원을 지정합니다. 턴 종료 시 남은 명령권으로 도시당 한 번 실행하며 금·무장 행동을 사용합니다.</p>' +
+    '<p><b>전체위임·AI 관전</b> : [위임·목표] → [전체위임 시작]으로 내정·외교·군사·전투와 월 진행을 AI에 맡길 수 있습니다. 타이틀의 [전체 AI 관전]은 세력 선택 없이 모든 세력을 AI가 운영합니다. 상단 버튼으로 일시정지·재개할 수 있고, 창을 열면 자동 진행이 일시정지합니다. 전체위임은 위임 메뉴에서 해제할 수 있습니다.</p>' +
     '<p><b>장수 개성</b> : 제갈량·관우·장비·조조·주유·여포는 고유 능력이 있습니다. 무장 일람과 부대 설명에서 확인합니다. 12개 관계 조합은 같은 전장의 병력 1,000명 이상인 상대 장수가 있어야 보너스를 제공합니다.</p>' +
     '<p><b>턴 진행</b> : 한 달에 명령권 = 보유 도시 수 + 2. 명령을 쓰고 [턴 종료]를 누르면 AI 세력이 움직이고 월간 수입·이벤트가 처리됩니다. <b>첫 2개월은 AI가 공격해 오지 않습니다.</b></p>' +
     '<p><b>무장 행동</b> : 각 무장은 한 달에 한 번만 명령에 참여할 수 있습니다(내정·군사·등용). 이미 참여한 무장은 도시 패널에서 흐리게 표시되며, 다음 달에 다시 활동할 수 있습니다. 포상·외교는 무장 행동을 소모하지 않습니다.</p>' +
-    '<p><b>내정</b> : 개발(농업→군량) · 상업(→금) · 치안(금·군량 생산/징병 효율) · 수복(방어도). 1/2/3명 배치에 금 60/95/130과 명령 1이 들고, 추가 무장의 효과는 65%/40%로 줄어듭니다. 정치·지력과 명재 특기가 효과를 높입니다. 선택 화면에 정확한 비용·효과·월 생산 증가를 표시하며, 최대치 근처에서는 실제 상승분만큼 비용도 줄어듭니다.</p>' +
+    '<p><b>내정</b> : 개발(농업→군량) · 상업(→금) · 치안(금·군량 생산/징병 효율) · 수복(방어도). <b>방어도 0~50의 보정은 기존대로 유지하고, 50 초과부터 추가로 강화됩니다. 방어력 보정은 50에서 +12.5%, 100에서 +38%입니다.</b> 1/2/3명 배치에 금 60/95/130과 명령 1이 들고, 추가 무장의 효과는 65%/40%로 줄어듭니다. 정치·지력과 명재 특기가 효과를 높입니다. 선택 화면에 정확한 비용·효과·월 생산 증가를 표시하며, 최대치 근처에서는 실제 상승분만큼 비용도 줄어듭니다.</p>' +
     '<p><b>재정·보급</b> : 매달 병력 500명당 금 1, 평시 90명당 군량 1을 소비합니다(도시별 올림). 인구 상한 초과 병력의 군량은 2배입니다. 치안은 금·군량 생산 모두에 영향을 줍니다. 도시 패널에서 모든 보유 도시를 합산한 월 순증감·군량 지속 기간을 확인하세요. [군량 매입]은 금 100/300/600으로 군량 200/600/1,200을 얻습니다. [군량 매각]은 군량 200/600/1,200을 금 80/240/480에 팝니다(매입가 대비 20% 낮음). 매입·매각 모두 명령 1을 쓰며 무장은 필요 없습니다. 군량 부족 시 미지급 비율에 따라 병력·사기가 감소하고, 급료 부족 시 사기가 감소합니다. 전투에서는 참가 병력과 행군 중인 원군 600명당 매 라운드 군량 1을 추가 소비합니다. 보급이 부족하면 해당 진영의 사기가 라운드당 최대 8 내려갑니다. 편성 화면에서 예상 소모를, 전장에서 누적 소모·잔여 군량을 확인하세요. 새 게임은 평시 주둔군 6개월분(최소 600)을 비축합니다.</p>' +
     '<p><b>군사</b> : 징병(1,000명당 금 80·치안 -5·신병 훈련 30/사기 55, <b>도시당 월 1회</b>) · 모병(1,000명당 금 160·치안 -1·신병 훈련 55/사기 75, 같은 달에 반복 가능). 충원·이동 시 기존 병력과 훈련·사기를 인원 비율로 합산합니다. 훈련(훈련도·사기↑) · 이동(아군 도시로, <b>무장 인원 제한 없음</b>, 출발 도시 병력 전부 이동 가능 — 목적지 인구 상한을 넘겨도 주둔 가능. 무장을 고르면 <b>목적지 후보 도시가 지도에 금색 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>. 지도 아래 띠의 [목록에서 선택]으로 목록 선택도 가능) · 출진(적 도시 공격 — 무장을 고르면 <b>목적지 후보 적 도시가 지도에 붉은 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>(지도 아래 띠의 [목록에서 선택]도 가능). 인접 아군 도시와 <b>합동 출진</b> → 전술 전투. 합류 도시 부대는 원군처럼 늦게 도착하고, 전투가 끝나면 무장·잔존 병력이 각자 출발 도시로 복귀).</p>' +
-    '<p><b>전투</b> : 부대별로 이동/공격/계략(화계·혼란·고무)/일기토/진형을 사용합니다. <b>이동한 뒤에도 같은 턴에 공격할 수 있습니다.</b> 병과 상성(기병→궁병→보병→기병), 진형, 지형(숲·산·성)을 활용하세요. <b>기병은 [돌격]</b>으로 최대 3칸까지 적 부대를 뚫고 반대편으로 빠져나올 수 있고, <b>보병은 2부대 이상이 모이면 [일제공격]</b>으로 같은 적을 동시에 공격합니다(반격 없음). <b>궁병은 [불화살]</b>로 적을 불태워 2라운드간 화상 피해를 남길 수 있고(부대당 2회, 숲에서 1.5배), <b>궁병이 아닌 부대가 근접 공격하면 상대의 반격</b>으로 아군도 피해를 입습니다. 전투 중에는 인접 아군 도시에서 <b>원군</b>을 보낼 수 있고, 원군은 행군에 며칠이 걸려 도착합니다(진군 상황은 전장 위쪽 상태바에 표시). <b>적도 병력이 불리해지면 원군을 보내므로</b> 상태바의 적 원군 표시를 확인하세요. 적이 우리 성을 공격하면 전투 전에 <b>수비 편성</b> 창이 열려 출진처럼 무장·병과·진형·병력을 직접 지정할 수 있습니다(창을 닫으면 자동 편성). <b>AI도 매 라운드 상황에 맞춰 진형을 바꿉니다</b>(성 수비=방원, 궁병=학익, 기병=봉시, 보병=거리별 방원·안행·어린). 진형 전환은 <b>부대마다 첫 1회가 행동을 소모하지 않습니다</b>(이후 전환은 행동 소모, AI도 동일). 전투는 최대 <b>15라운드</b>입니다. 공성전에서 <b>세 성을 살아 있는 공격 부대가 동시에 점유하면 방어측 패배</b>입니다. <b>수비측은 후퇴할 인접 아군 도시가 있으면 [후퇴]</b>로 성을 내주고 잔존 병력의 80%를 이끌고 빠져나갈 수 있습니다(무장도 함께 이동). <b>수비 편성 창에서도 [후퇴]</b>를 눌러 싸우지 않고 성을 내주고 빠져나갈 수 있습니다(편성 중 요청한 원군은 취소되어 출발 도시로 돌아갑니다). <b>[다음 턴]</b> 버튼으로 남은 부대를 대기시키고 턴을 넘길 수 있습니다.</p>' +
+    '<p><b>전투</b> : 부대별로 이동/공격/계략(화계·혼란·고무)/일기토/진형을 사용합니다. <b>이동한 뒤에도 같은 턴에 공격할 수 있습니다.</b> 병과 상성(기병→궁병→보병→기병), 진형, 지형(숲·산·성)을 활용하세요. <b>기병은 [돌격]</b>으로 최대 3칸까지 적 부대를 뚫고 반대편으로 빠져나올 수 있지만 <b>성은 빈 성·아군 성을 포함해 관통하거나 착지할 수 없습니다.</b>  <b>보병은 2부대 이상이 모이면 [일제공격]</b>으로 같은 적을 동시에 공격합니다(반격 없음). <b>궁병은 [불화살]</b>로 적을 불태워 2라운드간 화상 피해를 남길 수 있고(부대당 2회, 숲에서 1.5배), <b>궁병이 아닌 부대가 근접 공격하면 상대의 반격</b>으로 아군도 피해를 입습니다. <b>성에서 공격하면 받는 반격 피해가 지형 방어에 더해 25% 줄어듭니다.</b> 전투 중에는 인접 아군 도시에서 <b>원군</b>을 보낼 수 있고, 원군은 행군에 며칠이 걸려 도착합니다(진군 상황은 전장 위쪽 상태바에 표시). <b>적도 병력이 불리해지면 원군을 보내므로</b> 상태바의 적 원군 표시를 확인하세요. 적이 우리 성을 공격하면 전투 전에 <b>수비 편성</b> 창이 열려 출진처럼 무장·병과·진형·병력을 직접 지정할 수 있습니다(창을 닫으면 자동 편성). <b>AI도 매 라운드 상황에 맞춰 진형을 바꿉니다</b>(성 수비=방원, 궁병=학익, 기병=봉시, 보병=거리별 방원·안행·어린). 진형 전환은 <b>부대마다 첫 1회가 행동을 소모하지 않습니다</b>(이후 전환은 행동 소모, AI도 동일). 전투는 최대 <b>15라운드</b>입니다. 공성전에서 <b>세 성의 깃발이 모두 공격군으로 바뀌면 방어측 패배</b>입니다. <b>수비측은 후퇴할 인접 아군 도시가 있으면 [후퇴]</b>로 성을 내주고 잔존 병력의 80%를 이끌고 빠져나갈 수 있습니다(무장도 함께 이동). <b>수비 편성 창에서도 [후퇴]</b>를 눌러 싸우지 않고 성을 내주고 빠져나갈 수 있습니다(편성 중 요청한 원군은 취소되어 출발 도시로 돌아갑니다). <b>[다음 턴]</b> 버튼으로 남은 부대를 대기시키고 턴을 넘길 수 있습니다.</p>' +
     '<p><b>병력과 회복</b> : 현재 병력이 많을수록 공격·반격이 강해지며, 3,000명을 넘는 대부대는 증가폭이 완만해집니다. 1,000명 미만 부대는 사기·화상 효과와 적 계략 성공률이 낮고, 화계 피해도 병력에 비례해 줄어듭니다. 일기토 신청은 부대당 전투 중 1회입니다. 고무는 반드시 성공하며, 훈련도가 100이어도 [훈련]으로 사기를 회복할 수 있습니다.</p>' +
     '<p><b>인사</b> : 등용(재야·포로 설득) · 포상(금 300, 충성도↑). 충성도가 45 미만이면 배신할 수 있습니다. 세력 수장(★)은 충성 100으로 배신·포로가 없습니다.</p>' +
     '<p><b>시기별 등장</b> : 194년 이후 인물(제갈량·사마의·강유 등)은 <b>역사적 등장 시기</b>에 맞춰 해당 지역에 나타납니다. 등장한 달에는 전황 기록에 알림이 뜨고, 그 도시를 지배하는 세력이 있으면 곧바로 합류하며, 아니면 재야로 남아 [등용]으로 설득할 수 있습니다. 아직 등장하지 않은 인물은 무장 일람에 표시되지 않습니다.</p>' +
@@ -4492,7 +4608,7 @@ function saveMetaOf(data, savedAt) {
     savedAt: typeof savedAt === 'number' ? savedAt : 0,
     year: data ? data.year : 0, month: data ? data.month : 0,
     turn: data && typeof data.turn === 'number' ? data.turn : 0,
-    faction: f ? f.name : '?', cities
+    faction: f ? f.name + (data.fullDelegation ? ' · 전체위임' : '') : data && data.pf === null ? '전체 AI 관전' : '?', cities
   };
 }
 function readSaveData(n, kind = 'auto') {
@@ -4641,13 +4757,14 @@ function loadGame(slot, kind = 'auto') {
   if (!localStorage.getItem(saveSlotKey(n, kind))) { toast('저장된 게임이 없습니다'); return; }
   const data = readSaveData(n, kind);
   if (!data) { toast('불러오기 실패: 저장 데이터가 손상되었습니다'); return; }
-  if (!data.factions[data.pf]) { toast('불러오기 실패: 저장 데이터 형식이 올바르지 않습니다'); return; }
+  if (data.pf !== null && !data.factions[data.pf]) { toast('불러오기 실패: 저장 데이터 형식이 올바르지 않습니다'); return; }
   if (G && typeof confirm === 'function' && !confirm('현재 진행 상황을 덮어쓰고 불러옵니다. 계속할까요?')) return;
   restoreSave(data,(kind === 'manual' ? '수동저장 ' : '자동저장 ') + n);
 }
 function restoreSave(data,label) {
   const previous=G;
   try {
+    clearAutoPlay(); pausedAI = null; campaignEpoch++;
     stopAttackIntro();
     G = data;
     G.scenario = G.scenario || '194';
@@ -4660,12 +4777,14 @@ function restoreSave(data,label) {
     G.aiRunning = false;
     G.ui = {};
     G.over = !!G.over;
+    G.fullDelegation = !!G.pf && data.fullDelegation === true;
+    G.autoPaused = data.autoPaused === true;
     if (!Array.isArray(G.log)) G.log = [];
     G.officers.forEach(o => { if (!o.status) o.status = 'active'; });
     G.officers.forEach(o => { if (typeof o.debut !== 'number') o.debut = SCENARIO.year; });
     syncOfficers();                       // 새로 추가된 무장 정의 보충
     debutOfficers();                      // 이미 시기가 지난 인물은 바로 등장
-    G.cmdMax = G.cmdMax || (factionCities(G.pf).length + 2);
+    G.cmdMax = G.pf ? G.cmdMax || (factionCities(G.pf).length + 2) : 0;
     G.cmd = cl(G.cmd || 0, 0, G.cmdMax);
     if (!G.cities[G.sel]) G.sel = null;
     setTitleMode(false);
@@ -4676,6 +4795,7 @@ function restoreSave(data,label) {
     sfx('load');
     toast('불러왔습니다 — ' + G.year + '년 ' + G.month + '월 (' + label + ')');
     victoryCheck();
+    scheduleAutoPlay();
   } catch (e) {
     G=previous;toast('불러오기 실패: ' + e.message);
   }
@@ -4696,7 +4816,7 @@ function toggleSfx() {
 
 /* ── Game API ────────────────────────────────────────── */
 const Game = {
-  boot, startNew, reset, endTurn, chooseScenario,
+  boot, startNew, startSpectator, setFullDelegation, toggleAutoPlay, reset, endTurn, chooseScenario,
   openOfficers, officerSort, openDiplo, openHelp,
   openPolicies,setPolicy,openObjectives,setObjective,diploTruce,diploJoint,diploSurrender,diploAnnex,exportSave,importSave,previewImport,confirmImport,cancelImport,
   saveGame, loadGame, openLoad, toggleBgm, toggleSfx,

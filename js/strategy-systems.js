@@ -23,7 +23,7 @@ function aiDiplomacy() {
   // 소모된 국경의 휴전과 공통의 적에 대한 협력도 검토한다. 월 명령권과 자기 자금을 쓴다.
   if(G.turn>=6) for(let i=0;i<living.length;i++) for(let j=i+1;j<living.length;j++) {
     const a=living[i],b=living[j],f=G.factions[a],g=G.factions[b];
-    if(a===G.pf||b===G.pf||hasPeace(a,b)||f.vassalTo||g.vassalTo||(f.diploCooldown||0)>G.turn||(g.diploCooldown||0)>G.turn)continue;
+    if((a===G.pf&&!automatedFaction(a))||(b===G.pf&&!automatedFaction(b))||hasPeace(a,b)||f.vassalTo||g.vassalTo||(f.diploCooldown||0)>G.turn||(g.diploCooldown||0)>G.turn)continue;
     const border=factionCities(a).some(n=>G.cities[n].links.some(k=>G.cities[k].owner===b));
     const enemies=id=>new Set(factionCities(id).flatMap(n=>G.cities[n].links.map(k=>G.cities[k].owner)).filter(k=>k!==id&&!hasPeace(id,k)));
     const common=[...enemies(a)].some(k=>k!==b&&enemies(b).has(k)&&factionTotals(k).troops>Math.min(factionTotals(a).troops,factionTotals(b).troops));
@@ -39,7 +39,7 @@ function aiDiplomacy() {
   const dominant=living.slice().sort((a,b)=>factionCities(b).length-factionCities(a).length)[0];
   if(factionCities(dominant).length<15) return;
   // 플레이어의 동맹 수락은 직접 결정한다. AI끼리는 강대국과 국경을 맞댄 세력이 공동 대응한다.
-  const threatened=living.filter(a=>a!==G.pf&&a!==dominant&&!G.factions[a].vassalTo&&factionCities(a).some(n=>G.cities[n].links.some(k=>G.cities[k].owner===dominant)));
+  const threatened=living.filter(a=>(a!==G.pf||automatedFaction(a))&&a!==dominant&&!G.factions[a].vassalTo&&factionCities(a).some(n=>G.cities[n].links.some(k=>G.cities[k].owner===dominant)));
   for(let i=0;i<threatened.length;i++) for(let j=i+1;j<threatened.length;j++) {
     const a=threatened[i],b=threatened[j],f=G.factions[a],g=G.factions[b];
     if(hasPeace(a,b)||isAlly(a,dominant)||isAlly(b,dominant)||(f.diploCooldown||0)>G.turn||(g.diploCooldown||0)>G.turn) continue;
@@ -119,9 +119,11 @@ function diploAnnex(id) {
 }
 function openPolicies() {
   if(!strategyReady()) return;
-  showModal('<h3>도시 위임</h3><p class="muted">턴 종료 시 남은 명령권으로 도시당 1회 실행합니다. 직접 명령과 같은 금·무장 행동을 사용합니다. 후방 지원은 인접한 전방 방향 도시로 수송합니다.</p>'+factionCities(G.pf).map(n=>{
+  const automation = '<h3>' + (G.pf ? '전체위임' : '전체 AI 관전') + '</h3><p class="muted">내정·외교·등용·병력 이동·출진·수비·전투와 다음 달 진행까지 AI가 처리합니다. 상단 버튼으로 일시정지하거나 재개할 수 있습니다.</p>' +
+    (G.pf ? '<button class="primary" onclick="Game.setFullDelegation(' + !G.fullDelegation + ')">' + (G.fullDelegation ? '전체위임 해제 · 직접 지휘' : '전체위임 시작') + '</button>' : '<button class="primary" onclick="Game.toggleAutoPlay()">AI 자동 진행 재개</button>');
+  showModal(automation + (G.pf ? '<h3>도시 위임</h3><p class="muted">턴 종료 시 남은 명령권으로 도시당 1회 실행합니다. 직접 명령과 같은 금·무장 행동을 사용합니다. 후방 지원은 인접한 전방 방향 도시로 수송합니다. 전체위임 중에는 AI가 모든 도시의 운영 방침을 결정합니다.</p>'+factionCities(G.pf).map(n=>{
     const c=G.cities[n];return '<div class="row"><b>'+n+'</b><select aria-label="'+n+' 위임 방침" onchange="Game.setPolicy(\''+n+'\',this.value)">'+Object.entries(CITY_POLICIES).map(([id,label])=>'<option value="'+id+'"'+((c.policy||'manual')===id?' selected':'')+'>'+label+'</option>').join('')+'</select><span class="muted" id="policyPreview_'+n+'">'+policyPlan(c).label+'</span></div>';
-  }).join('')+'<div class="foot"><button onclick="Game.openObjectives()">승리 목표</button><button onclick="Game.closeModal()">닫기</button></div>');
+  }).join('') : '')+'<div class="foot">' + (G.pf ? '<button onclick="Game.openObjectives()">승리 목표</button>' : '') + '<button onclick="Game.closeModal()">닫기</button></div>');
 }
 function setPolicy(city,id) {
   if(!strategyReady()||G.cities[city]?.owner!==G.pf||!CITY_POLICIES[id])return;
@@ -163,6 +165,7 @@ function challengeTargets() {
   return targets.slice(0,5);
 }
 function objectiveStatus() {
+  if (!G.pf) return {label:'AI 관전: 모든 세력의 천하통일 경쟁',done:false};
   const goal=G.goal||{type:'unification'},mine=factionCities(G.pf).length;
   if(goal.type==='hegemony') return {label:'패권: 24도시 + 남은 모든 세력의 항복',done:mine>=24&&Object.keys(G.factions).every(id=>id===G.pf||!factionCities(id).length||G.factions[id].vassalTo===G.pf)};
   if(goal.type==='challenge'||goal.type==='scenario') {
@@ -174,12 +177,12 @@ function objectiveStatus() {
   return {label:'천하통일: '+mine+'/30도시',done:mine===30};
 }
 function openObjectives() {
-  if(!strategyReady())return;
+  if(!strategyReady()||!G.pf)return;
   const editable=G.turn===0&&G.cmd===G.cmdMax;
   showModal('<h3>승리 목표</h3><p>'+objectiveStatus().label+'</p><p class="muted">새 게임 첫 명령 전 목표를 선택할 수 있습니다. 기본 목표는 천하통일입니다. 단기 도전은 24개월 안에 지정된 가까운 적 도시 5곳 점령, 시나리오 목표는 주요 거점 점령 또는 남하 저지입니다.</p>'+['unification','hegemony','challenge','scenario'].map((id,i)=>'<button class="frow"'+(!editable?' disabled':'')+' onclick="Game.setObjective(\''+id+'\')">'+['천하통일','패권 승리','24개월 단기 도전','시나리오 목표'][i]+'</button>').join('')+'<div class="foot"><button onclick="Game.closeModal()">닫기</button></div>');
 }
 function setObjective(type) {
-  if(!strategyReady()||G.turn!==0||G.cmd!==G.cmdMax||!['unification','hegemony','challenge','scenario'].includes(type))return;
+  if(!strategyReady()||!G.pf||G.turn!==0||G.cmd!==G.cmdMax||!['unification','hegemony','challenge','scenario'].includes(type))return;
   const goal={type};
   if(type==='challenge') {goal.targets=challengeTargets();goal.deadline=24;}
   if(type==='scenario') {

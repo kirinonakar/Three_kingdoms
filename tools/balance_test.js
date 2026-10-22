@@ -25,9 +25,10 @@ const marker = '    start, act, setStrat, setForm, reinforce, retreatTo, clickCe
 const battle = fs.readFileSync(process.env.BALANCE_BATTLE_SOURCE || path.join(root, 'js/battle.js'), 'utf8');
 assert(battle.includes(marker), 'battle probe insertion point changed');
 vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js', 'battle-terrain.js'].map(f =>
-  fs.readFileSync(path.join(root, 'js', f), 'utf8')).join('\n') + '\n' +
-  battle.replace(marker, '    probe: { calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct, checkForts, attackAct, doCharge },\n' + marker), sandbox);
+  fs.readFileSync(f==='combat-rules.js'&&process.env.BALANCE_RULES_SOURCE?process.env.BALANCE_RULES_SOURCE:path.join(root, 'js', f), 'utf8')).join('\n') + '\n' +
+  battle.replace(marker, '    probe: { calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct, checkForts, syncForts, fortDuty, chargeOptions, attackAct, doCharge },\n' + marker), sandbox);
 const { Game, Battle } = sandbox, p = Battle.probe;
+const rules=vm.runInContext('CombatRules',sandbox);
 const officer = (name, wu = 80, zhi = 80) => ({ name, wu, zhi, pol: 80, cha: 80, skill: '' });
 const unit = (name, troops, branch = '보병') => ({ officer: officer(name), troops, branch, training: 80, morale: 80, form: '안행' });
 function setup(atk = [unit('A', 3000)], def = [unit('D', 3000)], onEnd = noop) {
@@ -40,6 +41,18 @@ function setup(atk = [unit('A', 3000)], def = [unit('D', 3000)], onEnd = noop) {
   return b;
 }
 if (!process.argv.includes('--simulate-only')) {
+// The low-defense range must never be weakened by the new high-defense curve.
+for(let defense=0;defense<=50;defense++)assert.equal(rules.cityDefenseMultiplier(defense),1+defense/400);
+for(let defense=1;defense<=100;defense++)assert(rules.cityDefenseMultiplier(defense)>=rules.cityDefenseMultiplier(defense-1));
+assert.equal(rules.cityDefenseMultiplier(0),1);
+assert.equal(rules.cityDefenseMultiplier(50),1.125);
+assert.equal(rules.cityDefenseMultiplier(100),1.38);
+assert.equal(rules.cityDefenseMultiplier(-20),1);
+assert.equal(rules.cityDefenseMultiplier(200),1.38);
+const guard=unit('guard',3000),attacker=unit('attacker',3000);
+assert(rules.damage(attacker,guard,{cityDef:100})<rules.damage(attacker,guard,{cityDef:50}));
+assert(rules.power(guard,[guard],{cityDef:100})>rules.power(guard,[guard],{cityDef:50}));
+console.log('[OK] unchanged defense 0–50, monotonic high fortification, shared tactical damage and strategic estimates');
 let b = setup(), a = b.units[0], d = b.units[1];
 const damage = {};
 for (const n of [1, 100, 500, 1000, 3000, 6000, 10000]) {
@@ -179,21 +192,60 @@ b=setup();a=b.units[0];d=b.units[1];p.doStratAct(a,d,'화계');const genericFire
 b=setup([unit('주유',3000)]);a=b.units[0];d=b.units[1];p.doStratAct(a,d,'화계');assert(3000-d.troops>genericFire);
 b=setup();a=b.units[0];d=b.units[1];p.attackAct(a,d);const normalMorale=d.morale;
 b=setup([unit('장비',3000)]);a=b.units[0];d=b.units[1];p.attackAct(a,d);assert.equal(d.morale,normalMorale-3);
-b=setup([unit('A',3000),unit('B',3000),unit('C',3000)]);b.opts.siege=true;
-b.forts=[{x:4,y:4,owner:'atk'},{x:5,y:4,owner:'atk'},{x:6,y:4,owner:'atk'}];b.units[2].x=8;
-assert(!p.checkForts(),'historic flags alone must not win a siege');
-b.units[2].x=6;assert(p.checkForts(),'simultaneous occupation should finish the siege');
-console.log('[OK] actual unique-general actions and simultaneous live occupation of all three forts');
+console.log('[OK] actual unique-general actions');
+
+// A single surviving unit can capture the forts in sequence, and defenders can recapture flags.
+b=setup();b.opts.siege=true;a=b.units[0];d=b.units[1];d.x=12;
+b.forts=[{x:4,y:4,owner:'def'},{x:6,y:4,owner:'def'},{x:8,y:4,owner:'def'}];
+for(const f of b.forts)b.terrain[f.y][f.x]=3;
+assert(!p.checkForts());assert.equal(b.forts[0].owner,'atk');
+assert.equal(p.fortDuty(a).hold,false,'attack AI should pursue the remaining flags');
+a.x=6;assert(!p.checkForts());assert.equal(b.forts[1].owner,'atk');
+d.x=4;assert(!p.checkForts());assert.equal(b.forts[0].owner,'def','defenders must recapture empty forts');
+d.x=12;a.x=4;assert(!p.checkForts());a.x=8;assert(p.checkForts(),'all three flags should win without simultaneous occupation');
+
+// Every castle on the ray blocks cavalry: enemy-held, friendly-held, empty, or the landing tile.
+for(const castle of ['enemy','friendly','empty','landing']) {
+  b=setup([unit('A',3000,'기병'),unit('ally',3000)]);a=b.units[0];d=b.units[2];a.x=3;d.x=4;b.units[1].x=10;
+  if(castle==='enemy')b.terrain[4][4]=3;
+  if(castle==='friendly'){b.units[1].x=5;b.terrain[4][5]=3;}
+  if(castle==='empty')b.terrain[4][5]=3;
+  if(castle==='landing')b.terrain[4][6]=3;
+  assert(!p.chargeOptions(a).some(o=>o.x===6&&o.y===4),castle+' castle was traversable');
+  const originalX=a.x,originalTroops=d.troops;p.doCharge(a,{x:6,y:4});assert.equal(a.x,originalX);assert.equal(d.troops,originalTroops);assert(!a.acted);
+}
+b=setup([unit('A',3000,'기병')]);a=b.units[0];d=b.units[1];a.x=3;d.x=4;
+assert(p.chargeOptions(a).some(o=>o.x===5&&o.y===4),'normal field charge must still work');
+
+// Fort cover protects the unit receiving a counterattack, for either army; use pre-hit strength.
+random=()=>.5;
+for(const side of ['atk','def'])for(const fort of [false,true]) {
+  b=setup();a=b.units.find(u=>u.side===side);d=b.units.find(u=>u!==a);b.terrain[a.y][a.x]=fort?3:0;
+  const expected=Math.max(1,Math.round(p.calcDamage(d,a)*.45*(fort?.75:1))),before=a.troops;
+  p.attackAct(a,d);assert.equal(before-a.troops,expected,'incorrect counter cover for '+side+'/'+fort);
+}
+b=setup();a=b.units[0];d=b.units[1];b.terrain[a.y][a.x]=3;d.confused=1;
+p.attackAct(a,d);assert.equal(a.troops,3000,'fort changes must preserve confusion counter suppression');
+console.log('[OK] sequential flag victory/recapture, attack AI flag pursuit, castle-blocked cavalry and 25% received counter reduction for both armies');
 }
 
 if (process.argv.includes('--simulate') || process.argv.includes('--simulate-only')) {
   // Paired seeds across force ratios. These are AI-vs-AI tactical trials, not player win rates.
   const table = [];
   const trials = Math.max(1,Math.min(256,Number(process.argv.find(a=>a.startsWith('--trials='))?.split('=')[1])||16));
-  for (const siege of [false, true]) for (const ratio of [.5, 1, 1.5, 2]) {
+  const cities = (process.argv.find(a=>a.startsWith('--cities='))?.slice('--cities='.length)||'낙양').split(',');
+  const ratios=(process.argv.find(a=>a.startsWith('--ratios='))?.slice('--ratios='.length)||'0.5,1,1.5,2').split(',').map(Number);
+  assert(ratios.every(r=>Number.isFinite(r)&&r>0&&r<=10),'invalid troop ratios');
+  const defenseArg=process.argv.find(a=>a.startsWith('--defense='))?.slice('--defense='.length);
+  const defense=defenseArg===undefined?null:Number(defenseArg);
+  assert(defense===null||Number.isFinite(defense)&&defense>=0&&defense<=100,'invalid city defense');
+  const modes=process.argv.includes('--siege-only')?[true]:[false,true];
+  const seedStart=Number(process.argv.find(a=>a.startsWith('--seed='))?.slice('--seed='.length)??731);
+  assert(Number.isSafeInteger(seedStart),'invalid simulation seed');
+  for (const city of cities) for (const siege of modes) for (const ratio of ratios) {
     let wins = 0, remainingAtk = 0, remainingDef = 0;
     for (let trial = 0; trial < trials; trial++) {
-      let seed = 731 + trial;
+      let seed = seedStart + trial;
       random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
       Game.startNew('cao');
       const troops = 3000, branches = ['보병', '기병', '궁병'];
@@ -203,7 +255,9 @@ if (process.argv.includes('--simulate') || process.argv.includes('--simulate-onl
       }));
       let outcome;
       timers = true;
-      Battle.start({ siege, city: Game.state.cities['낙양'], playerSide: 'atk', auto: true,
+      assert(Game.state.cities[city],'unknown simulation city: '+city);
+      if(defense!==null)Game.state.cities[city].def=defense;
+      Battle.start({ siege, city: Game.state.cities[city], playerSide: 'atk', auto: true,
         atk: { name: '공격', color: '#444', units: makeArmy('A', ratio) },
         def: { name: '수비', color: '#888', units: makeArmy('D', 1) }, onEnd: r => { outcome = r; } });
       timers = false;
@@ -212,8 +266,9 @@ if (process.argv.includes('--simulate') || process.argv.includes('--simulate-onl
       remainingAtk += outcome.atk.reduce((sum, u) => sum + u.troops, 0);
       remainingDef += outcome.def.reduce((sum, u) => sum + u.troops, 0);
     }
-    table.push({ mode: siege ? 'siege' : 'field', ratio, attackerWins: wins + '/'+trials,
+    table.push({ city, defense:defense??Game.state.cities[city].def, mode: siege ? 'siege' : 'field', ratio, attackerWins: wins + '/'+trials,
       meanAtkRemaining: Math.round(remainingAtk / trials), meanDefRemaining: Math.round(remainingDef / trials) });
   }
-  console.table(table);
+  if(process.argv.includes('--json'))console.log(JSON.stringify(table));
+  else console.table(table);
 }

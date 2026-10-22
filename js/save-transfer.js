@@ -8,7 +8,8 @@ function validateSave(data) {
   if(!finite(data.year,1,9999)||!finite(data.month,1,12)||!Number.isInteger(data.month)||!finite(data.turn??0,0,120000))throw Error('날짜가 잘못되었습니다');
   const scenario=scenarioById(data.scenario||'194'),defs=scenarioCities(scenario),factionDefs=scenarioFactions(scenario),fids=new Set(factionDefs.map(f=>f[0]));
   if((data.scenario&&!SCENARIOS.some(s=>s.id===data.scenario))||Object.keys(data.factions).length!==factionDefs.length)throw Error('시나리오 또는 세력 목록이 잘못되었습니다');
-  if(!fids.has(data.pf)||!data.factions[data.pf]||Object.keys(data.cities).length!==defs.length) throw Error('세력 또는 도시 목록이 잘못되었습니다');
+  if((data.pf!==null&&(!fids.has(data.pf)||!data.factions[data.pf]))||Object.keys(data.cities).length!==defs.length) throw Error('세력 또는 도시 목록이 잘못되었습니다');
+  for(const key of ['fullDelegation','autoPaused']) if(data[key]!==undefined&&typeof data[key]!=='boolean') throw Error('AI 위임 설정이 잘못되었습니다');
   const canonical=new Map(defs.map(c=>[c[0],c]));
   for(const [n,c] of Object.entries(data.cities)) {
     if(!canonical.has(n)||!c||c.name!==n||!data.factions[c.owner]||!fids.has(c.owner))throw Error('도시 소속이 잘못되었습니다');
@@ -72,7 +73,7 @@ function previewImport(text) {
   try {
     if(!transferReady())return false;
     importedSave=parseSaveFile(text);const d=importedSave;
-    showModal('<h3>저장 파일 가져오기</h3><p>'+scenarioById(d.scenario||'194').name+' · '+d.year+'년 '+d.month+'월 · '+d.factions[d.pf].name+'</p><p>보유 도시 '+Object.values(d.cities).filter(c=>c.owner===d.pf).length+'개 · 무장 '+d.officers.length+'명</p><p class="muted">[이어 하기]를 누르면 현재 진행 상황을 이 파일로 교체합니다. 기존 저장 슬롯은 유지됩니다.</p><div class="foot"><button onclick="Game.cancelImport()">취소</button><button class="primary" onclick="Game.confirmImport()">이어 하기</button></div>');return true;
+    showModal('<h3>저장 파일 가져오기</h3><p>'+scenarioById(d.scenario||'194').name+' · '+d.year+'년 '+d.month+'월 · '+(d.pf ? d.factions[d.pf].name : '전체 AI 관전')+'</p><p>'+(d.pf ? '보유 도시 '+Object.values(d.cities).filter(c=>c.owner===d.pf).length+'개' : '전체 도시 '+Object.keys(d.cities).length+'개')+' · 무장 '+d.officers.length+'명</p><p class="muted">[이어 하기]를 누르면 현재 진행 상황을 이 파일로 교체합니다. 기존 저장 슬롯은 유지됩니다.</p><div class="foot"><button onclick="Game.cancelImport()">취소</button><button class="primary" onclick="Game.confirmImport()">이어 하기</button></div>');return true;
   } catch(e) {importedSave=null;toast('가져오기 실패: '+e.message);return false;}
 }
 function cancelImport(){importedSave=null;closeModal();}

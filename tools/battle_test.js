@@ -427,6 +427,7 @@ Battle.start({
     const d = Bf.units.find(u => u.side === 'def');
     a.x = 3; a.y = 3; d.x = 5; d.y = 3;              // 사거리 2 (궁병 사거리)
     Bf.sel = a; Bf.side = 'atk'; Bf.mode = 'select';
+    pauseTimers = true; // 화상 직후를 검사한다. 동기 타이머로 다음 라운드까지 진행시키지 않는다.
     const before = d.troops, arrows = a.fire;
     check(arrows === 2, '불화살: 궁병 부대의 불화살이 2발이 아님 (' + arrows + ')');
     Battle.act('fire');
@@ -437,6 +438,7 @@ Battle.start({
     check(d.burn > 0, '불화살: 화상이 걸리지 않음');
     check(Bf.log.some(l => l.indexOf('불화살!') >= 0), '불화살: 로그 없음');
     check(soundEvents.some(e => e.name === 'fire'), '불화살: 화염 효과음 없음');
+    pauseTimers = false; Bf.busy = false;
   }
   if (Battle.state && !Battle.state.over) Battle.act('auto');
   check(Battle.state === null, '불화살: 전투 상태 미정리');

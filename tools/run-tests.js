@@ -1,6 +1,6 @@
 'use strict';
 const {spawnSync}=require('node:child_process'),path=require('node:path');
-const tests=['smoke','save','battle','terrain','map_territory','campaign','deployment','balance','economy','battle_supply','alliance','strategy'];
+const tests=['smoke','save','battle','terrain','map_territory','campaign','deployment','balance','economy','battle_supply','alliance','strategy','automation'];
 let failed=0;
 for(const name of tests) {
   const result=spawnSync(process.execPath,[path.join(__dirname,name+'_test.js')],{encoding:'utf8'});

@@ -270,7 +270,7 @@ const Battle = (function () {
       '<p>'+CombatRules.bonuses(u,alive(u.side),alive(u.side).filter(a=>mdist(a,u)<=2)).labels.join(' · ')+'</p>'+
       '<p>'+escape(BRANCHES[u.branch].desc)+'</p><p>'+escape((FORMS[u.form]||{}).desc||'')+'</p>'+
       (u.branch==='궁병'?'<p>불화살 '+fireLeft(u)+'회 남음</p>':'')+
-      (fortAt(u.x,u.y)?'<p class="ut-skill">성 주둔 · 지형 방어 +40%</p>':'');
+      (fortAt(u.x,u.y)?'<p class="ut-skill">성 주둔 · 지형 방어 +40% · 받는 반격 피해 -25%</p>':'');
     if(el.innerHTML!==html)el.innerHTML=html;
     el.hidden=false;
     const box=el.getBoundingClientRect(),width=window.innerWidth,height=window.innerHeight;
@@ -581,7 +581,8 @@ const Battle = (function () {
       for (let step = 1; step <= range; step++) {
         const nx = u.x + dir[0] * step, ny = u.y + dir[1] * step;
         if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) break;
-        if (B.terrain[ny][nx] === WATER) break;        // 물은 돌격으로도 못 건넌다
+        const terrain = B.terrain[ny][nx];
+        if (terrain === WATER || terrain === 3) break; // 물·성은 돌격 경로와 착지점에서 제외한다 (빈 성·아군 성도 동일)
         const occ = unitAt(nx, ny);
         if (occ) {
           if (occ.side === u.side) continue;           // 아군 위로는 지나갈 수 있다 (피해 없음)
@@ -741,6 +742,7 @@ const Battle = (function () {
 
   // 궁병이 아닌 부대가 근접 공격하면 상대의 반격을 받는다
   const COUNTER_RATE = 0.45;
+  const FORT_COUNTER_TAKEN = 0.75; // 성에서 공격한 부대는 지형 방어에 더해 받는 반격 피해 25% 경감
 
   function attackAct(a, d) {
     if (!B || B.over || !a.alive || !d.alive) return;
@@ -752,8 +754,9 @@ const Battle = (function () {
     // 혼란 상태의 부대는 반격할 수 없다
     const counterOk = a.branch !== '궁병' && mdist(a, d) === 1;
     const noCounter = counterOk && (d.confused > 0 || d.confusedNow);
+    const fortCover = B.terrain[a.y][a.x] === 3;
     const back = (counterOk && !noCounter)
-      ? Math.max(1, Math.round(calcDamage(d, a) * COUNTER_RATE)) : 0;
+      ? Math.max(1, Math.round(calcDamage(d, a) * COUNTER_RATE * (fortCover ? FORT_COUNTER_TAKEN : 1))) : 0;
     const counterImpact = tacticalScale(d);
     d.troops = Math.max(0, d.troops - dmg);
     d.morale = cl(d.morale - Math.round(ri(3, 8) * tacticalScale(a)), 0, 100);
@@ -773,6 +776,7 @@ const Battle = (function () {
       a.morale = cl(a.morale - Math.round(ri(1, 4) * counterImpact), 0, 100);
       B.floats.push({ x: a.x, y: a.y, text: '반격 -' + commas(back) });
       bLog('↩ ' + d.name + '의 반격! ' + a.name + ' 병력 -' + commas(back) +
+        (fortCover ? ' (성 방호 · 반격 피해 -25%)' : '') +
         (d.alive && !d.dying ? '' : ' (최후의 반격)'));
       fx(d.branch === '궁병' ? 'arrow' : 'slash', d, a, { delay: 330 });
       countered = true;
@@ -1068,7 +1072,6 @@ const Battle = (function () {
       if (u.side === 'atk') {
         const rest = forts.filter(f => f.owner !== u.side)
           .sort((a, b) => mdist(u, a) - mdist(u, b));
-        if(alive('atk').length>=forts.length) return {hold:true,fort:here};
         return rest[0] ? { hold: false, fort: rest[0] } : null;
       }
       // 수비 중이어도 적이 비워둔 빼앗긴 성이 가까우면 되찾으러 간다 (성은 비어도 깃발이 유지된다)
@@ -1202,8 +1205,8 @@ const Battle = (function () {
     const forts = fortTiles();
     if (!forts.length) return false;
     syncForts(true);
-    if (!forts.every(f => f.owner === 'atk' && unitAt(f.x,f.y)?.side==='atk')) return false;
-    bLog('🏯 모든 성을 공격군이 동시에 점유했습니다 — ' + B.opts.def.name + ' 패배!');
+    if (!forts.every(f => f.owner === 'atk')) return false;
+    bLog('🏯 세 성의 깃발이 모두 공격군으로 바뀌었습니다 — ' + B.opts.def.name + ' 패배!');
     end('attacker');
     return true;
   }
@@ -2758,7 +2761,7 @@ const Battle = (function () {
             ((u.confused > 0 || u.confusedNow) ? '<span class="badge2" style="color:#ffb0c8">혼란</span>' : '') +
             (u.burn > 0 ? '<span class="badge2" style="color:#ff9d5c">화상</span>' : '') +
             (u.branch === '궁병' ? '<span class="badge2" style="color:#ffb070">불화살 ' + fireLeft(u) + '</span>' : '') +
-            (fortAt(u.x, u.y) ? '<span class="badge2" style="color:#ffd479">성 안 · 방어 +40%</span>' : '') +
+            (fortAt(u.x, u.y) ? '<span class="badge2" style="color:#ffd479">성 안 · 방어 +40% · 반격 피해 -25%</span>' : '') +
             (sk ? '<span class="badge2" style="color:var(--gold)">' + u.officer.skill + '</span>' : '') + '</div>' +
           (trait?'<p class="muted">'+trait+'</p>':'') +
           '<div class="kv"><span>병력</span><b>' + commas(u.troops) + ' / ' + commas(u.max) + '</b>' +
