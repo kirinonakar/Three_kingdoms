@@ -24,9 +24,9 @@ vm.createContext(sandbox);
 const marker = '    start, act, setStrat, setForm, reinforce, retreatTo, clickCell, observation,';
 const battle = fs.readFileSync(process.env.BALANCE_BATTLE_SOURCE || path.join(root, 'js/battle.js'), 'utf8');
 assert(battle.includes(marker), 'battle probe insertion point changed');
-vm.runInContext(['data.js', 'game.js', 'battle-terrain.js'].map(f =>
+vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js', 'battle-terrain.js'].map(f =>
   fs.readFileSync(path.join(root, 'js', f), 'utf8')).join('\n') + '\n' +
-  battle.replace(marker, '    probe: { calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct },\n' + marker), sandbox);
+  battle.replace(marker, '    probe: { calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct, checkForts, attackAct, doCharge },\n' + marker), sandbox);
 const { Game, Battle } = sandbox, p = Battle.probe;
 const officer = (name, wu = 80, zhi = 80) => ({ name, wu, zhi, pol: 80, cha: 80, skill: '' });
 const unit = (name, troops, branch = '보병') => ({ officer: officer(name), troops, branch, training: 80, morale: 80, form: '안행' });
@@ -169,14 +169,30 @@ Battle.start({ siege: true, city: Game.state.cities['낙양'], playerSide: 'atk'
   def: { name: '수비', color: '#888', units: [unit('D', 3000)] }, onEnd: noop });
 assert.equal(Battle.state.cityDef, 0); assert.equal(Battle.state.units[0].training, 0);
 console.log('[OK] branch/terrain/general effects, scaled burns, spell chance/range, campaign capture/return, recovery cap, field/siege timeout');
+
+// Named abilities must change actual actions, not just the roster labels.
+random=()=>.5;b=setup();a=b.units[0];d=b.units[1];p.doStratAct(a,d,'혼란');assert.equal(d.confused,0);
+b=setup([unit('제갈량',3000)]);a=b.units[0];d=b.units[1];p.doStratAct(a,d,'혼란');assert(d.confused>0);
+random=()=>0;b=setup([unit('관우',3000),unit('ally',3000)]);a=b.units[0];d=b.units[2];d.x=a.x;d.y=a.y+1;b.units[1].morale=40;
+p.doDuel(a,d);assert.equal(b.units[1].morale,48,'duel victory should rally nearby allied troops');
+b=setup();a=b.units[0];d=b.units[1];p.doStratAct(a,d,'화계');const genericFire=3000-d.troops;
+b=setup([unit('주유',3000)]);a=b.units[0];d=b.units[1];p.doStratAct(a,d,'화계');assert(3000-d.troops>genericFire);
+b=setup();a=b.units[0];d=b.units[1];p.attackAct(a,d);const normalMorale=d.morale;
+b=setup([unit('장비',3000)]);a=b.units[0];d=b.units[1];p.attackAct(a,d);assert.equal(d.morale,normalMorale-3);
+b=setup([unit('A',3000),unit('B',3000),unit('C',3000)]);b.opts.siege=true;
+b.forts=[{x:4,y:4,owner:'atk'},{x:5,y:4,owner:'atk'},{x:6,y:4,owner:'atk'}];b.units[2].x=8;
+assert(!p.checkForts(),'historic flags alone must not win a siege');
+b.units[2].x=6;assert(p.checkForts(),'simultaneous occupation should finish the siege');
+console.log('[OK] actual unique-general actions and simultaneous live occupation of all three forts');
 }
 
 if (process.argv.includes('--simulate') || process.argv.includes('--simulate-only')) {
   // Paired seeds across force ratios. These are AI-vs-AI tactical trials, not player win rates.
   const table = [];
+  const trials = Math.max(1,Math.min(256,Number(process.argv.find(a=>a.startsWith('--trials='))?.split('=')[1])||16));
   for (const siege of [false, true]) for (const ratio of [.5, 1, 1.5, 2]) {
     let wins = 0, remainingAtk = 0, remainingDef = 0;
-    for (let trial = 0; trial < 16; trial++) {
+    for (let trial = 0; trial < trials; trial++) {
       let seed = 731 + trial;
       random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
       Game.startNew('cao');
@@ -196,8 +212,8 @@ if (process.argv.includes('--simulate') || process.argv.includes('--simulate-onl
       remainingAtk += outcome.atk.reduce((sum, u) => sum + u.troops, 0);
       remainingDef += outcome.def.reduce((sum, u) => sum + u.troops, 0);
     }
-    table.push({ mode: siege ? 'siege' : 'field', ratio, attackerWins: wins + '/16',
-      meanAtkRemaining: Math.round(remainingAtk / 16), meanDefRemaining: Math.round(remainingDef / 16) });
+    table.push({ mode: siege ? 'siege' : 'field', ratio, attackerWins: wins + '/'+trials,
+      meanAtkRemaining: Math.round(remainingAtk / trials), meanDefRemaining: Math.round(remainingDef / trials) });
   }
   console.table(table);
 }

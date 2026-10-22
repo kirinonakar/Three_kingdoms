@@ -1,0 +1,10 @@
+{
+  "name": "three-kingdoms-unification",
+  "private": true,
+  "scripts": {
+    "test": "node tools/run-tests.js",
+    "test:browser": "node tools/agent_test.js",
+    "test:audio": "node tools/audio_test.js",
+    "test:balance": "node tools/balance_test.js --simulate --trials=64"
+  }
+}

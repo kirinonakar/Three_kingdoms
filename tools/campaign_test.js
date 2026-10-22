@@ -10,7 +10,7 @@ const sandbox={console,Math:math,document:{getElementById:el,querySelectorAll:()
   setTimeout:fn=>(fn(),0),clearTimeout:noop,confirm:()=>true,
   Battle:{start(opts){battles++;opts.onEnd({winner:'defender',atk:opts.atk.units.map(u=>({name:u.officer?.name||'',troops:Math.round(u.troops*.55)})),def:opts.def.units.map(u=>({name:u.officer?.name||'',troops:Math.round(u.troops*.9)})),captured:[]});}}};
 sandbox.window=sandbox;
-vm.createContext(sandbox);vm.runInContext(['data.js','game.js'].map(f=>fs.readFileSync(path.join(root,'js',f),'utf8')).join('\n')+'\nthis.data={SCENARIOS,scenarioCities,OFFICER_DEFS,citySize};',sandbox);
+vm.createContext(sandbox);vm.runInContext(['data.js','combat-rules.js','strategy-systems.js','save-transfer.js','game.js'].map(f=>fs.readFileSync(path.join(root,'js',f),'utf8')).join('\n')+'\nthis.data={SCENARIOS,scenarioCities,OFFICER_DEFS,citySize};',sandbox);
 const {Game,data}=sandbox,d=Game._debug;
 const rosterSize=data.OFFICER_DEFS.length;
 assert.equal(new Set(data.OFFICER_DEFS.map(o=>o[0])).size,rosterSize);

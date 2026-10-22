@@ -4,7 +4,7 @@
 'use strict';
 const SAVE_KEY = 'sangokji_save_v1';        // 구버전 단일 슬롯 — 자동저장 슬롯 1로 옮긴다
 const SAVE_SLOTS = 3;                       // 수동 3개 + 자동 3개를 별도로 보관한다
-const SAVE_VERSION = 3;
+const SAVE_VERSION = 4;
 const saveSlotKey = (n, kind = 'auto') => SAVE_KEY + (kind === 'manual' ? '_manual_slot' : '_slot') + n;
 const saveMetaKey = (n, kind = 'auto') => SAVE_KEY + (kind === 'manual' ? '_manual_meta' : '_meta') + n;
 const GRACE_TURNS = 2;      // 초반 2개월은 AI가 플레이어 도시를 공격하지 않는다
@@ -184,8 +184,8 @@ const FOOD_BUY_RATE = 2; // 금 1로 군량 2 매입 (플레이어·AI 공통)
 const FOOD_SELL_RATE = 0.4; // 군량 1 매각 시 금 0.4 (매입가 대비 20% 낮음)
 const GARRISON_FOOD_DIVISOR = 90;
 const BATTLE_FOOD_DIVISOR = 600; // 병력 600명당 하루(라운드) 추가 군량 1
-function cityGoldIncome(c) { return Math.round((c.comm * 1.5 + c.pop * 2) * (0.55 + c.order / 200)); }
-function cityFoodIncome(c) { return Math.round((c.agri * 2.4 + c.pop * 2) * (0.65 + c.order / 200)); }
+function cityGoldIncome(c) { return Math.round((c.comm * 1.5 + c.pop * 2) * (0.55 + c.order / 200) * cityRegion(c).gold); }
+function cityFoodIncome(c) { return Math.round((c.agri * 2.4 + c.pop * 2) * (0.65 + c.order / 200) * cityRegion(c).food); }
 function cityGoldUpkeep(c) { return Math.ceil((c.troops || 0) / 500); }
 /* 주둔 군량 소비 — 인구 상한 초과 병력은 2배로 소모 */
 function cityFoodUpkeep(c) {
@@ -201,19 +201,22 @@ function consumeBattleSupply(ctx, request) {
   const report = {};
   for (const side of ['atk','def']) {
     const tally = supply[side], f = G.factions[ctx[side]];
-    tally.troopDays += Math.max(0,request[side] || 0);
-    const total = Math.ceil(tally.troopDays / BATTLE_FOOD_DIVISOR);
+    tally.rate=tally.rate||expeditionRate(ctx,side);
+    tally.troopDays += Math.max(0,request[side] || 0)*tally.rate;
+    const total = Math.ceil(tally.troopDays / BATTLE_FOOD_DIVISOR - 1e-9);
     const cost = total - tally.cost, paid = f ? Math.min(f.food,cost) : cost;
     if (f) f.food -= paid;
     tally.cost = total; tally.paid += paid;
     report[side] = { cost, total, paid:tally.paid, food:f ? f.food : null,
-      moraleLoss:cost > paid ? Math.ceil(8*(cost-paid)/cost) : 0 };
+      rate:tally.rate, moraleLoss:cost > paid ? Math.ceil(8*(cost-paid)/cost) : 0 };
   }
   return report;
 }
 function battleSupplyHint(troops) {
-  return '전투 추가 군량: 600명당 라운드 1 · 현재 편성으로 15라운드에 약 ' +
-    commas(Math.ceil(troops*15/BATTLE_FOOD_DIVISOR)) + ' (병력 손실·추가 원군에 따라 변동) · 보유 ' +
+  const deploy=G.ui.deploy,ctx=G.battleCtx||{atk:G.pf,to:deploy?.target};
+  const rate=expeditionRate(ctx,ctx.atk===G.pf?'atk':'def');
+  return '전투 추가 군량: 600명당 라운드 1'+(rate>1?' · 원정 거리 가산 +'+Math.round((rate-1)*100)+'%':'')+' · 현재 편성으로 15라운드에 약 ' +
+    commas(Math.ceil(troops*rate*15/BATTLE_FOOD_DIVISOR)) + ' (병력 손실·추가 원군에 따라 변동) · 보유 ' +
     commas(G.factions[G.pf].food) + ' · 보급 부족 시 라운드당 사기 최대 -8';
 }
 function factionEconomy(fid) {
@@ -392,14 +395,17 @@ function toCanvas(e) {
   const r = cvM.getBoundingClientRect();
   return { x: (e.clientX - r.left) * (cvM.width / r.width), y: (e.clientY - r.top) * (cvM.height / r.height) };
 }
-/* 월드 좌표 기준 도시 판정 (화면 반경 20px 고정) */
+/* 월드 좌표 기준 도시 판정. 축소 화면에서도 CSS 24px 반경, 겹치면 가장 가까운 도시. */
 function cityAt(x, y) {
-  const rr = 20 / (view.scale || 1);
+  const rect=cvM?.getBoundingClientRect();
+  const cssScale=rect?.width?cvM.width/rect.width:1;
+  const rr = 24*cssScale / (view.scale || 1);
+  let best=null,dist=rr*rr;
   for (const n of Object.keys(G ? G.cities : {})) {
     const c = G.cities[n];
-    if ((c.x - x) * (c.x - x) + (c.y - y) * (c.y - y) <= rr * rr) return n;
+    const d=(c.x-x)**2+(c.y-y)**2;if(d<=dist){best=n;dist=d;}
   }
-  return null;
+  return best;
 }
 function setTitleMode(on) {
   if (document.body && document.body.classList) document.body.classList[on ? 'add' : 'remove']('title');
@@ -459,7 +465,7 @@ function renderTop() {
   $('cmdInfo').textContent = G.cmd + ' / ' + G.cmdMax;
   $('cityInfo').textContent = factionCities(G.pf).length + ' / ' + Object.keys(G.cities).length;
   const busy = !!G.aiRunning || !!attackIntro;
-  ['btnSave', 'btnLoad', 'btnOfficers', 'btnDiplo'].forEach(id => { const el = $(id); if (el) el.disabled = busy; });
+  ['btnSave', 'btnLoad', 'btnOfficers', 'btnDiplo', 'btnPolicies'].forEach(id => { const el = $(id); if (el) el.disabled = busy; });
   const b = $('btnEndTurn');
   if (b) b.disabled = !!G.over || busy;
 }
@@ -1798,12 +1804,13 @@ function renderCityPanel() {
   const cap = Math.max(1, capOf(c));
   const mine = isPlayerCity(c);
   const ally = isAlly(G.pf, c.owner);
+  const peace = !mine && !ally && hasPeace(G.pf,c.owner);
   let h = '<div class="city-head">' +
     '<div class="city-title"><span class="dot" style="background:' + (f ? f.color : '#8b9a8e') + '"></span>' +
     '<h3>' + c.name + '</h3><span class="fac-chip">' + (f ? f.name : '재야') + '</span><span class="fac-chip" title="인구 9만 미만: 소 · 9만 이상: 중 · 14만 이상: 대">' + citySize(c).label + '</span></div>' +
     '<span class="badge ' + (mine ? 'mine' : ally ? 'ally' : 'foe') + '">' + (mine ? '내 도시' : ally ? '동맹국 도시' : '적 도시') + '</span></div>';
   /* 좌측 열: 도시 현황 */
-  let colA = '<div class="cmdline"><span>명령권</span><b>' + G.cmd + ' / ' + G.cmdMax + '</b></div>';
+  let colA = '<p class="muted">'+objectiveStatus().label+'</p><p class="muted">위임: '+(CITY_POLICIES[c.policy]||CITY_POLICIES.manual)+'</p><div class="cmdline"><span>명령권</span><b>' + G.cmd + ' / ' + G.cmdMax + '</b></div>';
   colA += '<div class="statlist">' + [['agri', '농업'], ['comm', '상업'], ['def', '방어'], ['order', '치안']].map(([k, label]) =>
     '<div class="srow"><span class="k">' + label + '</span><div class="bar"><i class="barfill ' + k + '" style="width:' + c[k] + '%"></i></div><b class="v">' + c[k] + '</b></div>'
   ).join('') + '</div>';
@@ -1820,7 +1827,7 @@ function renderCityPanel() {
     '</span><span>' + pct + '%</span></div>';
   if (overCap > 0) colA += '<p class="warn">인구 상한보다 병력이 ' + commas(overCap) + ' 많습니다. 초과 병력은 군량을 2배로 소비합니다.</p>';
   const economy = factionEconomy(c.owner);
-  colA += '<div class="income">' +
+  colA += '<p class="muted">'+cityRegion(c).label+'</p><div class="income">' +
     '<div class="ic"><span class="k">도시 월 수입</span><b class="g">금 +' + commas(cityGoldIncome(c)) + '</b><b class="f">군량 +' + commas(cityFoodIncome(c)) + '</b></div>' +
     '<div class="ic"><span class="k">도시 주둔 소비</span><b class="g">금 -' + commas(cityGoldUpkeep(c)) + '</b><b class="f">군량 -' + commas(cityFoodUpkeep(c)) + '</b></div>' +
     '<div class="ic"><span class="k">월 순증감 · 세력 전체 · 평시</span><b>금 ' + signed(economy.goldNet) + ' · 군량 ' + signed(economy.foodNet) + '</b></div>' +
@@ -1832,7 +1839,7 @@ function renderCityPanel() {
   /* 우측 열: 무장 · 인접 도시 · 경고 */
   let colB = '<div class="sec"><span>주둔 무장</span><b>' + offs.length + '명' + (avail < offs.length ? ' · 가용 ' + avail : '') + '</b></div><div class="otags">' +
     (offs.map(o => '<span class="otag' + (o.used ? ' used' : '') + '" title="무력 ' + o.wu + ' · 지력 ' + o.zhi + ' · 정치 ' + o.pol + ' · 매력 ' + o.cha +
-      (SKILLS[o.skill] ? ' · ' + o.skill + ': ' + SKILLS[o.skill].desc : '') + (o.used ? ' · 이번 달 명령 완료' : '') + '">' + o.name +
+      (SKILLS[o.skill] ? ' · ' + o.skill + ': ' + SKILLS[o.skill].desc : '') + (CombatRules.description(o)?' · '+CombatRules.description(o):'') + (o.used ? ' · 이번 달 명령 완료' : '') + '">' + o.name +
       (o.used ? '<i class="sk">완료</i>' : (o.skill ? '<i class="sk">' + o.skill + '</i>' : '')) + '</span>').join('') || '<span class="muted">없음</span>') +
   '</div>';
   /* 재야 · 포로 무장 — 등용 후보 */
@@ -1921,8 +1928,8 @@ function renderCityPanel() {
       '</div></div>';
     });
     dock += '</div>';
-  } else if (ally) {
-    colB += '<div class="enemy-note">동맹국 도시입니다. 이 도시에 인접한 전장에서 <b>원군 요청</b>을 할 수 있습니다. 지원 여부와 무장·병력 규모는 동맹국의 주둔 병력·군량·주변 위협·관계에 따라 결정됩니다.</div>';
+  } else if (ally || peace) {
+    colB += peace?'<div class="enemy-note">휴전 협정에 따라 공격할 수 없습니다. 외교 화면에서 남은 기간을 확인하세요.</div>':'<div class="enemy-note">동맹국 도시입니다. 이 도시에 인접한 전장에서 <b>원군 요청</b>을 할 수 있습니다. 지원 여부와 무장·병력 규모는 동맹국의 주둔 병력·군량·주변 위협·관계에 따라 결정됩니다.</div>';
   } else {
     const adjacent = c.links.some(n => G.cities[n].owner === G.pf);
     const canAtk = c.links.some(n => G.cities[n].owner === G.pf && G.cities[n].troops >= 1000 && availableOfficers(n).length);
@@ -1958,8 +1965,10 @@ function renderLog() {
     const m = /^\[([^\]]+)\]\s*([\s\S]*)$/.exec(l.m);
     const t = m ? m[1] : '';
     const msg = m ? m[2] : l.m;
-    return '<div class="logline ' + l.c + '">' + (t ? '<span class="t">' + t + '</span>' : '') +
-      '<span class="m">' + msg + '</span></div>';
+    const escape=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const cls=['good','bad','war','sep'].includes(l.c)?l.c:'';
+    return '<div class="logline ' + cls + '">' + (t ? '<span class="t">' + escape(t) + '</span>' : '') +
+      '<span class="m">' + escape(msg) + '</span></div>';
   }).join('');
   el.scrollTop = el.scrollHeight;
   const n = $('logCount'); if (n) n.textContent = G.log.length + '건';
@@ -2265,7 +2274,7 @@ function moveTargets(from) {
 function attackTargets(from) {
   const c = G && G.cities ? G.cities[from] : null;
   if (!c) return [];
-  return c.links.filter(n => G.cities[n] && G.cities[n].owner !== G.pf && !isAlly(G.pf, G.cities[n].owner));
+  return c.links.filter(n => G.cities[n] && G.cities[n].owner !== G.pf && !hasPeace(G.pf, G.cities[n].owner));
 }
 /* 지도에서 목적지를 고르는 중인 명령 — 이동·출진 공용 */
 function destPick() {
@@ -2452,13 +2461,14 @@ function openDeploy(from, target, namesCsv) {
   if (!names.length) return;
   G.ui.deploy = {
     target, main: from, parts: [{ city: from, names }],
-    amounts: {}, branches: {}, forms: {}, auto: false, rows: []
+    amounts: {}, branches: {}, forms: {}, auto: false, mode:'auto', rows: []
   };
   renderDeploy();
 }
 function renderDeploy() {
   const d = G.ui.deploy; if (!d) return;
   const t = G.cities[d.target];
+  if(!t||t.owner===G.pf||hasPeace(G.pf,t.owner)) {toast('현재 공격할 수 없는 도시입니다');return;}
   const rowsInfo = [];
   let body = '';
   d.parts.forEach((p, pi) => {
@@ -2501,6 +2511,8 @@ function renderDeploy() {
     (d.parts.length > 1 ? '<p class="muted">합류 도시 부대는 본대보다 늦게 도착하며(원군과 같은 행군 일수), 전투가 끝나면 무장과 잔존 병력이 각자 출발 도시로 복귀합니다.</p>' : '') +
     '<p class="muted">진형은 장수마다 따로 지정합니다 — ' +
       Object.keys(FORMS).map(f => '<b>' + f + '</b> ' + FORMS[f].desc).join(' · ') + '</p>' +
+    '<p><label>공략 방식 <select id="battleMode" aria-label="공략 방식" onchange="Game.state.ui.deploy.mode=this.value"><option value="auto"' + (d.mode==='auto'?' selected':'') + '>수비군 판단에 따라 야전 / 공성</option><option value="field"' + (d.mode==='field'?' selected':'') + '>야전 선행</option><option value="siege"' + (d.mode==='siege'?' selected':'') + '>바로 공성</option></select></label></p>' +
+    '<p class="muted">야전 승리 후에는 잔존 병력으로 공성을 이어갑니다. 도시 점령은 공성 승리 후 확정됩니다.</p>' +
     '<p><label class="muted"><input type="checkbox" id="autoBattle"' + (d.auto ? ' checked' : '') + '> 자동 전투(지휘 위임)</label></p>' +
     '<p class="muted" id="deploySupplyForecast" aria-live="polite"></p>' +
     body +
@@ -2546,6 +2558,7 @@ function syncDeploymentTroops(plan, rows, prefix, changedIndex) {
 function captureDeploy(changedIndex) {
   const d = G.ui.deploy; if (!d) return;
   const a = $('autoBattle'); if (a) d.auto = !!a.checked;
+  const mode=$('battleMode');if(mode&&['auto','siege','field'].includes(mode.value))d.mode=mode.value;
   const totals = syncDeploymentTroops(d, d.rows || [], 'tr_', changedIndex);
   (d.rows || []).forEach((r, i) => {
     const b = $('br_' + i);
@@ -2582,11 +2595,12 @@ function confirmDeploy() {
   captureDeploy();
   if (d.troopsAdjusted) { toast('현재 병력에 맞게 편성을 조정했습니다. 병력을 확인하고 다시 출진하세요'); return; }
   const t = G.cities[d.target];
+  if(!t||t.owner===G.pf||hasPeace(G.pf,t.owner)) {toast('현재 공격할 수 없는 도시입니다');return;}
   const units = [], extra = [], mainUnits = [], perCity = {}, home = {};
   for (let i = 0; i < (d.rows || []).length; i++) {
     const r = d.rows[i];
     const o = off(r.name), c = G.cities[r.city];
-    if (!o || !c) continue;
+    if (!o || !c || o.used || o.status!=='active' || o.faction!==G.pf || c.owner!==G.pf || o.city!==r.city) continue;
     const br = ($('br_' + i) || {}).value || '보병';
     const fm = ($('fm_' + i) || {}).value || d.forms[r.name] || defaultForm(br);
     const form = FORMS[fm] ? fm : defaultForm(br);
@@ -2621,6 +2635,7 @@ function confirmDeploy() {
   const days = (typeof Battle !== 'undefined' && Battle.reinforceDays) || 3;
   const ctx = {
     atk: G.pf, def: t.owner, from: d.main, to: d.target, home,
+    siege: d.mode==='field'?false:d.mode==='siege'?true:!aiFieldDefense(t, mainUnits),
     extra: extra.filter(g => g.units.length)          // 합동 출진 부대 (원군처럼 늦게 도착)
   };
   Object.keys(perCity).forEach(k => { G.cities[k].troops -= perCity[k]; });
@@ -2709,7 +2724,7 @@ function openDefenseDeploy(ctx, atkUnits) {
   }
   const plan = defensePlan(ctx.to);
   G.ui.defDeploy = {
-    ctx, atkUnits, city: ctx.to, auto: false,
+    ctx, atkUnits, city: ctx.to, auto: false, mode:'siege',
     names: plan.names, amounts: plan.amounts, branches: plan.branches, forms: plan.forms
   };
   renderDefenseDeploy();
@@ -2739,6 +2754,8 @@ function renderDefenseDeploy() {
       ') · 우리 병력 ' + commas(c.troops) + ' · 방어도 ' + c.def + ' · 훈련 ' + c.training + '</p>' +
     '<p class="muted">출진처럼 무장마다 병과·진형·병력을 지정합니다 — ' +
       Object.keys(FORMS).map(f => '<b>' + f + '</b> ' + FORMS[f].desc).join(' · ') + '</p>' +
+    '<p><label>수비 방침 <select id="defMode" aria-label="수비 방침" onchange="Game.state.ui.defDeploy.mode=this.value"><option value="siege"' + (d.mode==='siege'?' selected':'') + '>농성 — 성과 방어도 활용</option><option value="field"' + (d.mode==='field'?' selected':'') + '>야전 요격 — 패하면 성으로 후퇴</option></select></label></p>' +
+    '<p class="muted">야전에서 침공군을 물리치면 도시를 지킵니다. 야전 패배·성으로 후퇴 시 남은 부대와 예비 병력으로 공성을 이어갑니다.</p>' +
     '<p><label class="muted"><input type="checkbox" id="defAuto"' + (d.auto ? ' checked' : '') + '> 자동 전투(지휘 위임)</label></p>' +
     '<p class="muted" id="defSupplyForecast" aria-live="polite">' + battleSupplyHint(total + (d.reinf||[]).reduce((s,r)=>s+r.troops,0)) + '</p>' +
     rows +
@@ -2760,6 +2777,7 @@ function captureDefenseDeploy(changedIndex) {
   const d = G && G.ui ? G.ui.defDeploy : null; if (!d) return 0;
   const c = G.cities[d.city];
   const a = $('defAuto'); if (a) d.auto = !!a.checked;
+  const mode=$('defMode');if(mode&&['siege','field'].includes(mode.value)) d.mode=mode.value;
   const totals = syncDeploymentTroops(d, d.names.map(name => ({ city: d.city, name })), 'dtr_', changedIndex);
   const sum = totals[d.city] || 0;
   d.names.forEach((n, i) => {
@@ -2787,6 +2805,7 @@ function confirmDefenseDeploy() {
   const built = defenseUnitsFrom(d.city, d);
   if (!built.units.length) { toast('수비에 나설 부대가 없습니다 — 병력을 지정하세요'); return; }
   d.ctx.defReserve = built.reserve;         // 성에 남는 예비 병력
+  d.ctx.siege = d.mode !== 'field';
   const ctx = d.ctx, atkUnits = d.atkUnits, auto = d.auto, pre = (d.reinf || []).slice();
   G.ui.defDeploy = null;
   closeModal();
@@ -2886,22 +2905,24 @@ function beginBattle(ctx, atkUnits, defUnits, playerSide, auto, preReinf) {
   const aF = G.factions[ctx.atk], dF = G.factions[ctx.def] || { name: '재야', color: '#888' };
   G.battleActive = true;
   if (typeof Battle === 'undefined') { G.battleActive = false; return; }
-  ctx.reinf = {};                       // 원군 무장 → 출발 도시
-  ctx.foeReinf = {};                    // 적 원군 무장 → 출발 도시
+  if(!ctx.preserveReinf) ctx.reinf = {};                       // 원군 무장 → 출발 도시
+  if(!ctx.preserveReinf) ctx.foeReinf = {};                    // 적 원군 무장 → 출발 도시
   G.battleCtx = ctx;
   bgm('battle');                        // 전투 — 북이 앞서는 장단
   sfx('battleStart');
   Battle.start({
-    siege: true, city: G.cities[ctx.to], playerSide, auto: !!auto,
+    siege: ctx.siege !== false, city: G.cities[ctx.to], playerSide, auto: !!auto,
     atk: { name: aF.name, color: aF.color, units: atkUnits },
     def: { name: dF.name, color: dF.color, units: defUnits },
     retreatCities: playerSide === 'def' ? defenderRetreatCities(ctx) : [],
     onReinforce: openReinforce,
     onAiReinforce: battleAiReinforce,
-    onSupply: request => consumeBattleSupply(ctx, request),
+    onSupply: request => consumeBattleSupply(ctx, {...request, round:request.round+(ctx.roundOffset||0)}),
     onEnd: res => {
-      G.battleActive = false; G.battleCtx = null;
-      try { applyBattleResult(ctx, res); } finally { if (ctx.after) ctx.after(); }
+      if(ctx.siege===false && res.winner==='attacker') {
+        continueSiege(ctx,res,atkUnits,defUnits,playerSide,auto); return;
+      }
+      finishBattle(ctx,res);
     }
   });
   // 합동 출진(인접 도시 합류) 부대 — 본대와 달리 원군처럼 행군 일수 뒤에 도착한다
@@ -2914,6 +2935,52 @@ function beginBattle(ctx, atkUnits, defUnits, playerSide, auto, preReinf) {
   }
   // 수비 편성 창에서 미리 요청한 원군 — 전투 시작과 함께 출발해 이틀 뒤 도착한다
   if (preReinf && preReinf.length) applyDefReinforce(ctx, preReinf);
+}
+
+function finishBattle(ctx,res) {
+  for(const side of ['atk','def']) {
+    for(const lost of (ctx.fieldLost?.[side]||[])) if(!res[side].some(u=>u.name===lost.name)) res[side].push(lost);
+  }
+  G.battleActive=false;G.battleCtx=null;
+  try {applyBattleResult(ctx,res);} finally {if(ctx.after)ctx.after();}
+}
+
+// 야전에서는 도시 소유권을 바꾸지 않는다. 실제 생존 부대와 성의 예비 병력만 공성에 참가한다.
+function continueSiege(ctx,res,originalAtk,originalDef,playerSide,auto) {
+  const rebuild=(side,original)=>res[side].filter(u=>u.troops>0).map(u=>{
+    const source=original.find(x=>(x.officer?.name||'수비병')===u.name);
+    return {...source,officer:off(u.name)||source?.officer||null,troops:u.troops,
+      training:u.training??source?.training??60,morale:Math.max(20,u.morale??60),
+      branch:u.branch||source?.branch||'보병',form:u.form||source?.form||'방원'};
+  });
+  const atk=rebuild('atk',originalAtk),def=rebuild('def',originalDef);
+  const reserve=ctx.defReserve||0;
+  if(reserve && def.length) {
+    const counts=distribute(reserve,def.length),city=G.cities[ctx.to];
+    def.forEach((u,i)=>{const total=u.troops+counts[i];u.training=Math.round((u.training*u.troops+city.training*counts[i])/total);u.morale=Math.round((u.morale*u.troops+city.morale*counts[i])/total);u.troops=total;});
+  }
+  else if(reserve) {
+    const city=G.cities[ctx.to],counts=defenseUnits(ctx.to);
+    const amounts=distribute(reserve,counts.length);counts.forEach((u,i)=>def.push({...u,troops:amounts[i],training:city.training,morale:city.morale}));
+  }
+  ctx.defReserve=0;
+  ctx.fieldLost={atk:res.atk.filter(u=>u.troops<=0),def:res.def.filter(u=>u.troops<=0)};
+  // 야전 종료 시 아직 도착하지 않은 원군은 출발지로 돌아간다. 도착한 원군은 공성에도 참가한다.
+  for(const p of res.pending||[]) {const city=G.cities[p.from];if(city) city.troops+=p.units.reduce((s,u)=>s+u.troops,0);}
+  ctx.extra=[];
+  ctx.siege=true;ctx.roundOffset=(ctx.roundOffset||0)+(res.rounds||0);
+  ctx.preserveReinf=true;
+  if(!atk.length || !def.length) {
+    const pack=units=>units.map(u=>({name:u.officer?.name||'',troops:u.troops}));
+    finishBattle(ctx,{winner:atk.length?'attacker':'defender',atk:pack(atk),def:pack(def),captured:[],pending:[]});return;
+  }
+  log('⚔ '+G.cities[ctx.to].name+' 야전 종료 — 수비군이 성으로 물러나 공성을 이어갑니다.','war');
+  beginBattle(ctx,atk,def,playerSide,auto);
+}
+
+function aiFieldDefense(city,atkUnits) {
+  const defenders=defenseUnits(city.name),p=(us,opponents)=>us.reduce((s,u)=>s+CombatRules.power(u,us,{opponents}),0);
+  return city.def<75 && city.morale>=65 && p(defenders,atkUnits)>p(atkUnits,defenders)*1.1;
 }
 
 
@@ -2943,7 +3010,7 @@ function alliedReinforceCities(ctx) {
 function alliedReinforcePlan(c, ctx, side) {
   const fid = c.owner, f = G.factions[fid], enemy = ctx[side === 'atk' ? 'def' : 'atk'];
   const refuse = reason => ({ reason, troops: 0, units: [] });
-  if (fid === enemy || isAlly(fid, enemy)) return refuse('교전 상대와도 동맹을 맺고 있어 참전할 수 없습니다.');
+  if (fid === enemy || hasPeace(fid, enemy)) return refuse('교전 상대와도 동맹·휴전 관계여서 참전할 수 없습니다.');
   if (c.morale < 40 || c.training < 30) return refuse('부대의 사기·훈련을 회복해야 합니다.');
   const assigned = new Set(Object.keys(ctx.reinf || {}).concat(Object.keys(ctx.foeReinf || {})));
   const dd = G.ui.defDeploy;
@@ -2952,7 +3019,7 @@ function alliedReinforcePlan(c, ctx, side) {
     .sort((a, b) => (b.wu * .7 + b.zhi * .3) - (a.wu * .7 + a.zhi * .3));
   if (!list.length) return refuse('파견할 수 있는 미행동 무장이 없습니다.');
   const threats = (c.links || []).map(n => G.cities[n]).filter(t =>
-    t && t.name !== ctx.to && t.owner !== fid && !isAlly(fid, t.owner));
+    t && t.name !== ctx.to && t.owner !== fid && !hasPeace(fid, t.owner));
   const danger = threats.reduce((s, t) => s + t.troops, 0);
   const reserve = Math.max(800, Math.ceil(danger * .65 / (1 + c.def / 120)));
   if (c.troops - reserve < 300) return refuse('주변 적군에 대비할 수비 병력이 부족합니다.');
@@ -3304,7 +3371,7 @@ function applyBattleResult(ctx, res) {
   const from = G.cities[ctx.from], to = G.cities[ctx.to];
   if (ctx.supply && (ctx.atk===G.pf || ctx.def===G.pf)) {
     const supply=ctx.supply[ctx.atk===G.pf?'atk':'def'];
-    log('전투 추가 군량: -' + commas(supply.paid) + ' (' + Math.min(15,ctx.supply.round) + '라운드' +
+    log('전투 추가 군량: -' + commas(supply.paid) + ' (' + ctx.supply.round + '라운드' +
       (supply.cost>supply.paid ? ' · 미지급 ' + commas(supply.cost-supply.paid) : '') + ')','');
   }
   const atkTroops = res.atk.reduce((s, u) => s + u.troops, 0);
@@ -3340,7 +3407,7 @@ function applyBattleResult(ctx, res) {
       stay += (u.troops || 0);
       if (o) { o.city = ctx.to; o.status = 'active'; }
     });
-    to.owner = ctx.atk;
+    to.owner = ctx.atk;to.policy='manual';
     to.def = Math.max(20, Math.round(to.def * 0.6));
     to.order = Math.max(10, Math.round(to.order * 0.6));
     to.troops = stay;
@@ -3452,31 +3519,38 @@ function destroyFaction(fid) {
 }
 
 /* ── AI 전투 자동 판정 ───────────────────────────────── */
-function unitPower(u) {
-  const o = u.officer || { wu: 55 };
-  return u.troops * (0.6 + o.wu / 150) * (0.6 + (u.morale ?? 70) / 180) * (1 + (u.training ?? 60) / 300);
+function unitPower(u, allies=[], options={}) {
+  return CombatRules.power(u, allies, options);
 }
+
 function autoResolve(ctx, atkUnits, defUnits, defBonus) {
   // 간이 전투는 전력 차이로 3~12일을 추산하고, 같은 일일 보급 규칙을 적용한다.
   atkUnits = atkUnits.map(u=>({...u})); defUnits = defUnits.map(u=>({...u}));
-  const aj=rnd(.9,1.1), dj=(defBonus?1.15:1)*rnd(.9,1.1);
-  const ap=atkUnits.reduce((s,u)=>s+unitPower(u),0)*aj, dp=defUnits.reduce((s,u)=>s+unitPower(u),0)*dj;
+  const city=G.cities[ctx.to],siege=defBonus&&ctx.siege!==false;
+  let terrain=1;
+  if(typeof BattleTerrain!=='undefined' && city) {
+    const tiles=BattleTerrain.build(city,siege).terrain.flat().filter(t=>t!==4);
+    terrain=tiles.reduce((s,t)=>s+([1,1.15,1.25,1.4,1,1][t]||1),0)/Math.max(1,tiles.length);
+  }
+  const aj=rnd(.9,1.1), dj=terrain*(siege?1.12:1)*rnd(.9,1.1);
+  const power=(units,defense)=>units.reduce((sum,u)=>sum+unitPower(u,units,{cityDef:defense&&siege?(city?.def??50):0,opponents:defense?atkUnits:defUnits}),0);
+  const ap=power(atkUnits,false)*aj, dp=power(defUnits,true)*dj;
   const rounds = cl(Math.round(12/Math.max(ap/Math.max(1,dp),dp/Math.max(1,ap),1)),3,12);
   const troops = us => us.reduce((s,u)=>s+u.troops,0);
   for(let round=1;round<=rounds;round++) {
-    const supply=consumeBattleSupply(ctx,{round,atk:troops(atkUnits),def:troops(defUnits)});
+    const supply=consumeBattleSupply(ctx,{round:round+(ctx.roundOffset||0),atk:troops(atkUnits),def:troops(defUnits)});
     for(const [side,units] of [['atk',atkUnits],['def',defUnits]]) {
       if(supply && supply[side].moraleLoss) units.forEach(u=>{u.morale=cl((u.morale??70)-supply[side].moraleLoss,0,100);});
     }
   }
-  const pa = atkUnits.reduce((s, u) => s + unitPower(u), 0) * aj;
-  const pd = defUnits.reduce((s, u) => s + unitPower(u), 0) * dj;
+  const pa = power(atkUnits,false) * aj;
+  const pd = power(defUnits,true) * dj;
   const winner = pa >= pd ? 'attacker' : 'defender';
   const r = pa / (pa + pd);
   const asr = winner === 'attacker' ? cl(0.45 + 0.45 * r, 0.35, 0.92) : cl(0.15 + 0.5 * r, 0.05, 0.6);
   const dsr = winner === 'defender' ? cl(0.45 + 0.45 * (1 - r), 0.35, 0.92) : cl(0.15 + 0.5 * (1 - r), 0.05, 0.6);
-  const atk = atkUnits.map(u => ({ name: u.officer ? u.officer.name : '', troops: Math.round(u.troops * asr * rnd(0.9, 1.1)) }));
-  const def = defUnits.map(u => ({ name: u.officer ? u.officer.name : '', troops: Math.round(u.troops * dsr * rnd(0.9, 1.1)) }));
+  const atk = atkUnits.map(u => ({ name: u.officer ? u.officer.name : '', troops: Math.round(u.troops * asr * rnd(0.9, 1.1)),morale:u.morale,training:u.training,branch:u.branch,form:u.form }));
+  const def = defUnits.map(u => ({ name: u.officer ? u.officer.name : '', troops: Math.round(u.troops * dsr * rnd(0.9, 1.1)),morale:u.morale,training:u.training,branch:u.branch,form:u.form }));
   return { winner, atk, def, captured: [], rounds };
 }
 
@@ -3577,17 +3651,17 @@ function openDiplo() {
         '<span class="name">' + g.name + '</span>' +
         '<span class="nums">' + nums(t) +
           '<span class="kv">관계 <b style="color:' + relCol + '">' + rel + '</b></span>' +
-          '<span class="kv">' + (ally ? '<b style="color:#7fc98a">동맹</b>' : '중립') + '</span>' +
+          '<span class="kv">' + (g.vassalTo===G.pf?'종속 세력':ally ? '<b style="color:#7fc98a">동맹</b>'+ (f.pacts?.[id]?' '+Math.max(0,f.pacts[id]-G.turn)+'개월':'') : (f.truces?.[id]>G.turn?'휴전 '+(f.truces[id]-G.turn)+'개월':'중립')) + '</span>' +
         '</span>' +
-        '<span class="right">' + (ally
-          ? '<button class="small" onclick="Game.diploBreak(\'' + id + '\')">동맹 해지</button>'
+        '<span class="right">'+(g.vassalTo===G.pf?'<button class="small" onclick="Game.diploAnnex(\''+id+'\')">영토 편입</button>': ally
+          ? '<button class="small" onclick="Game.diploBreak(\'' + id + '\')">동맹 해지</button> <button class="small" onclick="Game.diploJoint(\''+id+'\')">공동 출진(300)</button>'
           : '<button class="small" onclick="Game.diploGift(\'' + id + '\')">선물(300)</button> ' +
-            '<button class="small" onclick="Game.diploAlly(\'' + id + '\')">동맹 제안(500)</button>') +
-        '</span></div>';
+            '<button class="small" onclick="Game.diploAlly(\'' + id + '\')">12개월 동맹(500)</button> <button class="small" onclick="Game.diploTruce(\''+id+'\')">휴전(300)</button>') +
+        (surrenderChance(id)>0?'<button class="small" onclick="Game.diploSurrender(\''+id+'\')">항복 권고(500) '+Math.round(surrenderChance(id)*100)+'%</button>':'')+'</span></div>';
     }).join('');
   showModal('<h3>외교</h3>' +
     '<p class="muted">내 세력 <span class="nums">' + nums(mine) + '</span></p>' +
-    '<p class="muted">선물로 관계를 높이고, 관계가 좋으면 동맹이 성사됩니다. 동맹국은 서로 공격하지 않습니다.</p>' +
+    '<p class="muted">선물로 관계를 높이고, 관계가 좋으면 동맹이 성사됩니다. 동맹은 12개월, 휴전은 6개월 유지됩니다. 종속 세력은 영토 편입이 가능합니다.</p>' +
     rows + '<div class="foot"><button onclick="Game.closeModal()">닫기</button></div>');
 }
 function diploGift(id) {
@@ -3601,13 +3675,14 @@ function diploGift(id) {
 }
 function diploAlly(id) {
   const f = G.factions[G.pf];
+  if(!strategyReady()||!G.factions[id]||hasPeace(G.pf,id))return;
   if (f.gold < 500) { toast('금이 부족합니다'); return; }
   const rel = f.rel[id] || 0;
   const myC = factionCities(G.pf).length, otC = factionCities(id).length;
   const p = cl(0.08 + rel / 180 + (myC >= otC ? 0.10 : 0), 0.05, 0.85);
   f.gold -= 500;
   if (Math.random() < p) {
-    f.ally[id] = true; G.factions[id].ally[G.pf] = true;
+    makePact(G.pf,id);
     log(G.factions[id].name + '와 동맹을 맺었습니다!', 'good');
   } else {
     f.rel[id] = cl(rel - 5, -100, 100); G.factions[id].rel[G.pf] = f.rel[id];
@@ -3617,7 +3692,9 @@ function diploAlly(id) {
 }
 function diploBreak(id) {
   const f = G.factions[G.pf];
+  if(!strategyReady()||!G.factions[id]||f.vassalTo===id||G.factions[id].vassalTo===G.pf)return;
   delete f.ally[id]; delete G.factions[id].ally[G.pf];
+  delete f.pacts?.[id];delete G.factions[id].pacts?.[G.pf];
   f.rel[id] = cl((f.rel[id] || 0) - 25, -100, 100);
   G.factions[id].rel[G.pf] = f.rel[id];
   log(G.factions[id].name + '와의 동맹을 파기했습니다.', 'bad');
@@ -3666,7 +3743,7 @@ function renderTopSafe() {
   $('foodInfo').textContent = '0';
   $('cmdInfo').textContent = '0';
   $('cityInfo').textContent = '0';
-  ['btnSave', 'btnLoad', 'btnOfficers', 'btnDiplo', 'btnEndTurn'].forEach(id => { const el = $(id); if (el) el.disabled = false; });
+  ['btnSave', 'btnLoad', 'btnOfficers', 'btnDiplo', 'btnPolicies', 'btnEndTurn'].forEach(id => { const el = $(id); if (el) el.disabled = false; });
 }
 
 /* ── 턴 종료 → AI 행동 → 월간 정산 ──────────────────── */
@@ -3676,11 +3753,13 @@ function endTurn() {
   if (G.over) return;
   if (G.battleActive) { toast('전투가 진행 중입니다'); return; }
   if (G.aiRunning) { toast('AI 세력이 행동 중입니다'); return; }
+  runPolicies();
   if (G.cmd > 0) log('명령권 ' + G.cmd + '개가 소멸합니다.', '');
   G.ui.move = null; G.ui.attack = null; syncMoveHint();
   closeModal();
   G.cmd = 0;
   G.aiRunning = true;
+  aiDiplomacy();
   campaignDiplomacy();
   sfx('turn');
   renderTop(); renderCityPanel();
@@ -3723,7 +3802,7 @@ function campaignDiplomacy() {
   const living=Object.keys(G.factions).filter(fid=>factionCities(fid).length);
   if(living.length!==2) return;
   const rival=living.find(fid=>fid!==G.pf), f=G.factions[rival];
-  if(!f || !isAlly(rival,G.pf)) return;
+  if(!f || f.vassalTo===G.pf || !isAlly(rival,G.pf)) return;
   if(!f.pactWarning) {
     f.pactWarning={target:G.pf,until:(G.turn||0)+3};
     log(f.name+'이(가) 천하의 패권을 요구합니다. 3개월 뒤 동맹을 종료하겠다고 통보했습니다.','war');
@@ -3738,7 +3817,7 @@ function campaignDiplomacy() {
 function aiFrontline(fid, c) {
   return (c.links || []).some(n => {
     const t = G.cities[n];
-    return t && t.owner !== fid && !isAlly(fid, t.owner);
+    return t && t.owner !== fid && !hasPeace(fid, t.owner);
   });
 }
 /* 세력 병력 ÷ 인접 적 병력 — 1 미만이면 수적으로 열세 */
@@ -3753,21 +3832,22 @@ function aiTroopRatio(fid, cities) {
       const t = G.cities[n];
       if (!t || own[n] || seen[n]) return;
       seen[n] = true;
-      if (!isAlly(fid, t.owner)) foe += t.troops || 0;
+      if (!hasPeace(fid, t.owner)) foe += t.troops || 0;
     });
   });
   return foe > 0 ? mine / foe : 99;
 }
 /* 수비 도시의 방어력 — 전투 중 인접 도시에서 올 수 있는 원군까지 포함한다 */
-function aiDefensePower(target) {
-  const base = Math.max(1, target.troops) * (1 + target.def / 120) *
-    (1 + target.training / 200) * (1 + Math.min(5, officersIn(target.name).length) * 0.03);
+function aiDefensePower(target, opponents=[]) {
+  const army=defenseUnits(target.name);
+  const base = Math.max(1,army.reduce((s,u)=>s+unitPower(u,army,{cityDef:target.def,opponents}),0)*1.12);
   let extra = 0;
   (target.links || []).forEach(n => {
     const c = G.cities[n];
     if (!c || c.owner !== target.owner || c.name === target.name) return;
     if (c.troops < 1600 || !officersIn(c.name).length) return;
-    extra += Math.min(6000, Math.floor(c.troops * .45)) * (1 + c.training / 200);
+    const help=defenseUnits(n).map(u=>({...u,troops:Math.round(u.troops*Math.min(6000,c.troops*.45)/Math.max(1,c.troops))}));
+    extra += help.reduce((s,u)=>s+unitPower(u,help),0);
   });
   return base + Math.min(base * .4, extra * .35); // 실제 파견 상한·행군 지연 반영
 }
@@ -3824,14 +3904,6 @@ function runFactionAI(fid, done) {
   if (!G || G.over || !G.factions[fid]) { done(); return; }
   const cities = factionCities(fid);
   if (!cities.length) { done(); return; }
-  // 점령 후 본대가 떠난 도시에 지휘관이 0명이면 징병·훈련까지 영구 정지하던 문제.
-  // 인접한 아군 도시에서 여분의 장수 한 명을 보내 지휘 체계를 복원한다.
-  cities.filter(n=>!officersIn(n).length).forEach(n=>{
-    const donor=G.cities[n].links.map(c=>G.cities[c]).filter(c=>c.owner===fid && officersIn(c.name).length>1)
-      .sort((a,b)=>officersIn(b.name).length-officersIn(a.name).length)[0];
-    const officer=donor && officersIn(donor.name).filter(o=>!isLeader(o.name)).sort((a,b)=>a.wu-b.wu)[0];
-    if(officer) officer.city=n;
-  });
   const f = G.factions[fid];
   // 유휴 개월이 길어질수록 우세만 기다리지 않고 대등한 전력으로도 공세를 준비한다.
   f.quietMonths = (f.quietMonths || 0) + 1;
@@ -3840,10 +3912,12 @@ function runFactionAI(fid, done) {
   // 군량 부족으로 후반 병력이 계속 붕괴하는 악순환을 자기 예산의 매입으로 완화한다.
   const economy = factionEconomy(fid);
   const supplyNeed = Math.max(Math.max(0,-economy.foodNet)*3, economy.foodUpkeep*2);
-  if (f.food < supplyNeed && f.gold > 600) {
-    buyFood(f, Math.min(Math.ceil((supplyNeed-f.food)/FOOD_BUY_RATE), Math.floor(f.gold-600)));
-  }
   const acts = [];
+  if(f.food< supplyNeed && f.gold>600) acts.push({t:'buy',cn:cities[0],cost:Math.min(600,Math.ceil((supplyNeed-f.food)/FOOD_BUY_RATE),Math.floor(f.gold-600))});
+  cities.filter(n=>!officersIn(n).length).forEach(n=>{
+    const donor=G.cities[n].links.map(c=>G.cities[c]).find(c=>c.owner===fid&&availableOfficers(c.name).length>1);
+    if(donor) acts.push({t:'relocate',cn:n,from:donor.name});
+  });
   let budget = Math.max(0,f.gold-economy.goldUpkeep); // 다음 급료를 남기고 지출한다
   const foodStress = economy.foodNet < 0 && f.food < Math.max(economy.foodUpkeep*3,-economy.foodNet*6);
   // 충성도가 낮은 무장 포상 (수장 제외)
@@ -3867,21 +3941,24 @@ function runFactionAI(fid, done) {
     if (!offs) return;
     const front = aiFrontline(fid, c);
     // 공격 판단 — 병력 30%는 방어용으로 남긴다
-    const targets = c.links.map(n => G.cities[n]).filter(t => t.owner !== fid && !isAlly(fid, t.owner) &&
+    const targets = c.links.map(n => G.cities[n]).filter(t => t.owner !== fid && !hasPeace(fid, t.owner) &&
       !(t.owner === G.pf && (G.turn || 0) < GRACE_TURNS));
     if (targets.length && c.troops >= 2800) {
-      const best = targets.slice().sort((a, b) => (a.troops * (1 + a.def / 100)) - (b.troops * (1 + b.def / 100)))[0];
+      const priority=c=>c.name===f.warTarget?.city&&f.warTarget.until>G.turn;
+      const best = targets.slice().sort((a,b)=>Number(priority(b))-Number(priority(a))||aiDefensePower(a)-aiDefensePower(b))[0];
       // 초반에는 플레이어를 공격하지 않는다 (준비 시간 확보)
       const canHitPlayer = !(best.owner === G.pf && (G.turn || 0) < GRACE_TURNS);
       const commit = Math.max(1000, Math.floor(c.troops * (0.7 + pressure * .15)));
-      const myP = commit * (1 + c.training / 200) * (1 + c.morale / 200) * (1 + Math.min(5,offs) * 0.03);
+      const army=aiUnits(cn,commit);
+      const defenders=defenseUnits(best.name);
+      const myP = army.reduce((s,u)=>s+unitPower(u,army,{opponents:defenders}),0);
       // 수비측은 전투 중 원군을 받으므로 그 잠재력까지 비교한다
-      const defP = aiDefensePower(best);
+      const defP = aiDefensePower(best,army);
       // 작은 국경 도시 한 곳의 병력 상한 때문에 대도시 공략이 영원히 막히지 않게 합동 공세를 편성한다.
       const extra=late && myP<=defP*(1.15-pressure*.27) ? best.links.map(n=>G.cities[n]).filter(src=>
         src.owner===fid && src.name!==cn && !campaignUsed.has(src.name) && src.troops>=2400 && officersIn(src.name).length)
         .sort((a,b)=>b.troops-a.troops).slice(0,2).map(src=>({from:src.name,troops:Math.floor(src.troops*.4)})):[];
-      const support=extra.reduce((sum,e)=>{const src=G.cities[e.from];return sum+e.troops*(1+src.training/200)*(1+src.morale/200)*.85;},0);
+      const support=extra.reduce((sum,e)=>{const units=aiUnits(e.from,e.troops);return sum+units.reduce((s,u)=>s+unitPower(u,units,{opponents:defenders}),0)*.85;},0);
       if (canHitPlayer && myP+support > defP * (1.15-pressure*.27)) {
         acts.push({ t:'attack',cn,target:best.name,troops:commit,extra });
         campaignUsed.add(cn);extra.forEach(e=>campaignUsed.add(e.from));return;
@@ -3930,7 +4007,7 @@ function runFactionAI(fid, done) {
       budget -= plan.cost;
     });
   }
-  acts.length = Math.min(acts.length, cities.length * 3 + 3);
+  acts.length = Math.min(acts.length, cities.length + 2);
   let i = 0;
   const step = () => {
     if (!G || G.over) { done(); return; }
@@ -3942,9 +4019,9 @@ function runFactionAI(fid, done) {
 
 function aiUnits(cn, troops) {
   const c = G.cities[cn];
-  const list = officersIn(cn).slice().sort((a, b) => b.wu - a.wu).slice(0, 5);
-  const total = Math.max(0, Math.round(troops));
-  if (!list.length) return [{ officer: null, troops: total, branch: '보병', training: c.training, morale: c.morale, form: '어린' }];
+  const list = availableOfficers(cn).slice().sort((a, b) => PICK_SCORE.attack(b) - PICK_SCORE.attack(a)).slice(0, 5);
+  const total = Math.min(list.length*10000,Math.max(0, Math.round(troops)));
+  if (!list.length) return [];
   const counts = distribute(total, list.length);
   return list.map((o, i) => ({
     officer: o, troops: counts[i], branch: autoBranch(o), training: c.training, morale: c.morale,
@@ -3955,27 +4032,32 @@ function aiUnits(cn, troops) {
 function execAIAct(fid, a, cb) {
   if (!G || G.over) { cb(); return; }
   const f = G.factions[fid];
+  if(f.commandTurn!==G.turn) {f.commandTurn=G.turn;f.commands=factionCities(fid).length+2;}
+  if(f.commands<=0) {cb();return;}
+  const spend=()=>{f.commands--;};
   const c = G.cities[a.cn];
   if (a.t === 'reward') {
     const o = off(a.name);
     if (o && o.faction === fid && o.loyalty < 100 && f.gold >= 300) {
-      f.gold -= 300;
+      spend();f.gold -= 300;
       o.loyalty = cl(o.loyalty + ri(8, 15), 0, 100);
     }
     cb(); return;
   }
   if (!c || c.owner !== fid) { cb(); return; }
+  if(a.t==='buy') {if(a.cost>0&&f.gold>=a.cost) {spend();buyFood(f,a.cost);}cb();return;}
+  if(a.t==='relocate') {const src=G.cities[a.from];const o=src&&src.owner===fid&&src.links.includes(c.name)&&availableOfficers(src.name).length>1?availableOfficers(src.name).find(o=>!isLeader(o.name)):null;if(o){spend();o.city=c.name;o.used=true;}cb();return;}
   if (a.t === 'admin') {
     const o = pickSorted(c.name,PICK_SCORE.admin)[0];
     if (o && ADMIN_LABEL[a.stat]) {
       const quote = adminQuote(c,a.stat,[o.name]);
-      if (quote.ok) applyAdmin(c,a.stat,[o.name],quote);
+      if (quote.ok) {spend();applyAdmin(c,a.stat,[o.name],quote);}
     }
     cb(); return;
   }
   if (a.t === 'train') {
     const o = pickSorted(c.name,PICK_SCORE.train)[0];
-    if (o && (c.training<100 || c.morale<100)) applyTraining(c,[o.name]);
+    if (o && (c.training<100 || c.morale<100)) {spend();applyTraining(c,[o.name]);}
     cb(); return;
   }
   if (a.t === 'recruit') {
@@ -3985,7 +4067,7 @@ function execAIAct(fid, a, cb) {
     if (o) {
       const budget = a.amt ? Math.min(f.gold,Math.ceil(a.amt*(mode==='levy'?LEVY_COST:RECRUIT_COST)-1e-9)) : f.gold;
       const quote = recruitQuote(c,o,mode,budget);
-      if (quote.ok) applyRecruit(c,o,mode,quote);
+      if (quote.ok) {spend();applyRecruit(c,o,mode,quote);}
     }
     cb(); return;
   }
@@ -3995,20 +4077,21 @@ function execAIAct(fid, a, cb) {
     if (!src || src.owner !== fid) { cb(); return; }
     if (!src.links.includes(c.name)) { cb(); return; }
     const amt = Math.min(Math.round(a.troops || 0), Math.max(0,src.troops-AI_REAR_RESERVE), Math.max(0,aiLogisticsCap(fid,c)-c.troops));
-    if (amt <= 0) { cb(); return; }
+    const movers=availableOfficers(src.name).sort((x,y)=>y.wu-x.wu);
+    if (amt <= 0 || !movers.length) { cb(); return; }
+    spend();
     addGarrison(c,amt,src.training,src.morale); src.troops -= amt;
     // 무장도 함께 이동 — 출발 도시에 최소 1명은 남긴다
-    const movers = officersIn(src.name).sort((x, y) => y.wu - x.wu);
-    const spare = Math.min(2, Math.max(0, movers.length - 1));
-    movers.slice(0, spare).forEach(o => { o.city = c.name; });
+    const spare = Math.min(2, Math.max(1, movers.length - 1));
+    movers.slice(0, spare).forEach(o => { o.city = c.name; o.used=true; });
     cb(); return;
   }
   if (a.t === 'hr') {
     const o = off(a.name);
     const valid = o && o.city === a.cn && ((o.faction === 'free' && o.status === 'active') || o.status === 'pow');
     if (!valid) { cb(); return; }
-    const best = officersIn(a.cn).reduce((x, y) => ((x && x.cha >= y.cha) ? x : y), null);
-    const p = cl(0.22 + (best ? best.cha : 40) / 320 + (o.status === 'pow' ? 0.12 : 0), 0.08, 0.8);
+    const best=bestAvailable(a.cn);if(!best){cb();return;}
+    const p=hireChance(a.cn,o,best);spend();best.used=true;
     if (Math.random() < p) {
       o.faction = fid; o.status = 'active'; o.loyalty = ri(55, 75);
       log(f.name + '이(가) ' + o.name + '을(를) 등용했습니다.', '');
@@ -4017,23 +4100,24 @@ function execAIAct(fid, a, cb) {
   }
   if (a.t === 'attack') {
     const t = G.cities[a.target];
-    if (!t || t.owner === fid || isAlly(fid, t.owner) || !c.links.includes(a.target)) { cb(); return; }
+    if (!t || t.owner === fid || hasPeace(fid, t.owner) || !c.links.includes(a.target)) { cb(); return; }
     if (t.owner === G.pf && (G.turn || 0) < GRACE_TURNS) { cb(); return; }
     const commit = Math.min(a.troops || c.troops, c.troops);
     const atkUnits = aiUnits(a.cn, commit);
     const committed = atkUnits.reduce((s, u) => s + u.troops, 0);
     if (committed < 100) { cb(); return; }
+    spend();markUsed(atkUnits.map(u=>u.officer?.name));
     f.quietMonths = 0;
     c.troops -= committed;
     const ctx = { atk: fid, def: t.owner, from: a.cn, to: a.target, home:{}, extra:[] };
     (a.extra||[]).forEach(e=>{
       const src=G.cities[e.from];
       if(!src || src.owner!==fid || !t.links.includes(src.name) || src.name===a.cn) return;
-      const amount=Math.min(e.troops,Math.max(0,src.troops-AI_REAR_RESERVE));
-      if(amount<500 || !officersIn(src.name).length) return;
+      const amount=Math.min(e.troops,Math.max(0,src.troops-AI_REAR_RESERVE),Math.min(2,availableOfficers(src.name).length)*10000);
+      if(amount<500 || !availableOfficers(src.name).length) return;
       const units=aiUnits(src.name,amount).slice(0,2),counts=distribute(amount,units.length);
       units.forEach((u,i)=>{u.troops=counts[i];if(u.officer)ctx.home[u.officer.name]=src.name;});
-      src.troops-=amount;ctx.extra.push({from:src.name,units});
+      markUsed(units.map(u=>u.officer?.name));src.troops-=amount;ctx.extra.push({from:src.name,units});
     });
     if (t.owner === G.pf) {
       // 플레이어와의 전투 → 수비 편성 창을 띄운 뒤 전술 화면(플레이어가 수비)
@@ -4043,10 +4127,17 @@ function execAIAct(fid, a, cb) {
     } else {
       playAttackIntro(ctx, () => {
         const units = atkUnits.concat(ctx.extra.flatMap(e=>e.units));
+        ctx.siege=!aiFieldDefense(t,units);
         // 수비 병력이 없는 성 — 전투 없이 자동 후퇴
         // 자동 후퇴 결과는 내부에서 합동 부대를 따로 더하므로 본대만 넘긴다 (병력 중복 합산 방지)
         if (!resolveAutoRetreat(ctx, atkUnits)) {
-          applyBattleResult(ctx, autoResolve(ctx, units, defenseUnits(a.target), true));
+          let result=autoResolve(ctx,units,defenseUnits(a.target),ctx.siege);
+          if(!ctx.siege&&result.winner==='attacker') {
+            const rebuild=(list,rows)=>rows.map(r=>({...list.find(u=>(u.officer?.name||'')===r.name),...r}));
+            ctx.siege=true;ctx.roundOffset=result.rounds;
+            result=autoResolve(ctx,rebuild(units,result.atk),rebuild(defenseUnits(a.target),result.def),true);
+          }
+          applyBattleResult(ctx,result);
         }
         setTimeout(cb, 0);
       });
@@ -4204,14 +4295,16 @@ function victoryCheck() {
       '<div class="foot"><button class="primary" onclick="Game.reset()">새 게임</button></div>');
     return;
   }
-  if (mine === total) {
+  const objective=objectiveStatus();
+  if(objective.failed) {G.over=true;renderTop();sfx('defeat');showModal('<h2>목표 기한 종료</h2><p>'+objective.label+'</p><div class="foot"><button onclick="Game.reset()">새 게임</button></div>');return;}
+  if (mine === total || objective.done) {
     G.over = true;
     sfx('victory');
     renderTop();
     const offs = officersOf(G.pf).length;
-    showModal('<h2>천하통일!</h2>' +
+    showModal('<h2>'+ (mine===total?'천하통일!':'목표 달성!')+'</h2>' +
       '<p style="text-align:center">' + G.year + '년 ' + G.month + '월 — ' + G.factions[G.pf].name +
-      '이(가) ' + total + '개 도시를 모두 손에 넣고 천하를 통일했습니다!</p>' +
+      '이(가) '+(mine===total?total+'개 도시를 모두 손에 넣고 천하를 통일했습니다!':objective.label+' 목표를 달성했습니다!')+'</p>' +
       '<p class="muted" style="text-align:center">재야를 포함한 휘하 무장 ' + offs + '명 · 금 ' + commas(G.factions[G.pf].gold) + '</p>' +
       '<div class="foot"><button class="primary" onclick="Game.reset()">새 게임</button></div>');
   }
@@ -4300,7 +4393,7 @@ function officerBodyHtml(all) {
       return '<tr><td>' + o.name + (isLeader(o.name) ? ' ★' : '') + '</td>' +
         '<td>' + (f ? '<i class="fdot" style="background:' + f.color + '"></i>' + f.name : '재야') + '</td>' +
         '<td>' + o.city + '</td><td>' + o.wu + '</td><td>' + o.zhi + '</td><td>' + o.pol + '</td><td>' + o.cha + '</td>' +
-        '<td><b>' + (o.wu + o.zhi + o.pol + o.cha) + '</b></td><td>' + (o.skill || '-') + '</td>' +
+        '<td><b>' + (o.wu + o.zhi + o.pol + o.cha) + '</b></td><td>' + (o.skill || '-') + (CombatRules.description(o)?'<br><span class="muted">'+CombatRules.description(o)+'</span>':'') + '</td>' +
         '<td style="color:' + st[1] + '">' + st[0] + '</td></tr>';
     }).join('');
     const vis = visibleOfficers();
@@ -4313,7 +4406,7 @@ function officerBodyHtml(all) {
   }
   const list = sortOfficers(officersOf(G.pf), false);
   const rows = list.map(o => '<tr><td>' + o.name + (isLeader(o.name) ? ' ★' : '') + '</td><td>' + o.city + '</td><td>' + o.wu + '</td><td>' + o.zhi +
-    '</td><td>' + o.pol + '</td><td>' + o.cha + '</td><td>' + (o.skill || '-') + '</td>' +
+    '</td><td>' + o.pol + '</td><td>' + o.cha + '</td><td>' + (o.skill || '-') + (CombatRules.description(o)?'<br><span class="muted">'+CombatRules.description(o)+'</span>':'') + '</td>' +
     '<td style="color:' + (o.loyalty < 45 ? 'var(--bad)' : (o.loyalty >= 80 ? 'var(--good)' : 'inherit')) + '">' + o.loyalty + '</td>' +
     '<td>' + (o.used ? '<span style="color:var(--muted)">완료</span>' : '<span style="color:var(--good)">가능</span>') + '</td></tr>').join('');
   const myCities = factionCities(G.pf);
@@ -4366,18 +4459,22 @@ function openOfficers(all) {
 /* ── 도움말 ──────────────────────────────────────────── */
 function openHelp() {
   showModal('<h3>게임 방법 — 삼국지 : 천하통일</h3>' +
-    '<p><b>목표</b> : 지도 위 모든 도시를 점령해 천하를 통일합니다.</p>' +
+    '<p><b>파일 이전</b> : [저장]의 JSON 내보내기, [불러오기]의 JSON 가져오기를 이용합니다. 파일을 검사한 뒤 미리보기에서 [이어 하기]로 적용합니다.</p>' +
+    '<p><b>목표</b> : 기본 목표는 모든 도시 점령입니다. 새 게임 첫 명령 전 [위임·목표] → [승리 목표]에서 패권·24개월 도전·시나리오 목표도 선택할 수 있습니다.</p>' +
+    '<p><b>야전과 공성</b> : 출진 편성의 [공략 방식]에서 야전 선행 / 바로 공성 / 수비군 판단을 고릅니다. 수비 편성에서는 [수비 방침]으로 야전 요격 또는 농성을 선택합니다. 야전에서 수비군이 이기면 침공을 막습니다. 공격군 승리 또는 [성으로 후퇴] 시 생존 부대와 예비 병력으로 공성을 이어가며, 군량은 누적 차감됩니다. 수비 병력이 전멸하고 예비 병력도 없으면 바로 점령합니다.</p>' +
+    '<p><b>도시 위임</b> : [위임·목표]에서 농업·상업·군사·최전선·후방 지원을 지정합니다. 턴 종료 시 남은 명령권으로 도시당 한 번 실행하며 금·무장 행동을 사용합니다.</p>' +
+    '<p><b>장수 개성</b> : 제갈량·관우·장비·조조·주유·여포는 고유 능력이 있습니다. 무장 일람과 부대 설명에서 확인합니다. 12개 관계 조합은 같은 전장의 병력 1,000명 이상인 상대 장수가 있어야 보너스를 제공합니다.</p>' +
     '<p><b>턴 진행</b> : 한 달에 명령권 = 보유 도시 수 + 2. 명령을 쓰고 [턴 종료]를 누르면 AI 세력이 움직이고 월간 수입·이벤트가 처리됩니다. <b>첫 2개월은 AI가 공격해 오지 않습니다.</b></p>' +
     '<p><b>무장 행동</b> : 각 무장은 한 달에 한 번만 명령에 참여할 수 있습니다(내정·군사·등용). 이미 참여한 무장은 도시 패널에서 흐리게 표시되며, 다음 달에 다시 활동할 수 있습니다. 포상·외교는 무장 행동을 소모하지 않습니다.</p>' +
     '<p><b>내정</b> : 개발(농업→군량) · 상업(→금) · 치안(금·군량 생산/징병 효율) · 수복(방어도). 1/2/3명 배치에 금 60/95/130과 명령 1이 들고, 추가 무장의 효과는 65%/40%로 줄어듭니다. 정치·지력과 명재 특기가 효과를 높입니다. 선택 화면에 정확한 비용·효과·월 생산 증가를 표시하며, 최대치 근처에서는 실제 상승분만큼 비용도 줄어듭니다.</p>' +
     '<p><b>재정·보급</b> : 매달 병력 500명당 금 1, 평시 90명당 군량 1을 소비합니다(도시별 올림). 인구 상한 초과 병력의 군량은 2배입니다. 치안은 금·군량 생산 모두에 영향을 줍니다. 도시 패널에서 모든 보유 도시를 합산한 월 순증감·군량 지속 기간을 확인하세요. [군량 매입]은 금 100/300/600으로 군량 200/600/1,200을 얻습니다. [군량 매각]은 군량 200/600/1,200을 금 80/240/480에 팝니다(매입가 대비 20% 낮음). 매입·매각 모두 명령 1을 쓰며 무장은 필요 없습니다. 군량 부족 시 미지급 비율에 따라 병력·사기가 감소하고, 급료 부족 시 사기가 감소합니다. 전투에서는 참가 병력과 행군 중인 원군 600명당 매 라운드 군량 1을 추가 소비합니다. 보급이 부족하면 해당 진영의 사기가 라운드당 최대 8 내려갑니다. 편성 화면에서 예상 소모를, 전장에서 누적 소모·잔여 군량을 확인하세요. 새 게임은 평시 주둔군 6개월분(최소 600)을 비축합니다.</p>' +
     '<p><b>군사</b> : 징병(1,000명당 금 80·치안 -5·신병 훈련 30/사기 55, <b>도시당 월 1회</b>) · 모병(1,000명당 금 160·치안 -1·신병 훈련 55/사기 75, 같은 달에 반복 가능). 충원·이동 시 기존 병력과 훈련·사기를 인원 비율로 합산합니다. 훈련(훈련도·사기↑) · 이동(아군 도시로, <b>무장 인원 제한 없음</b>, 출발 도시 병력 전부 이동 가능 — 목적지 인구 상한을 넘겨도 주둔 가능. 무장을 고르면 <b>목적지 후보 도시가 지도에 금색 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>. 지도 아래 띠의 [목록에서 선택]으로 목록 선택도 가능) · 출진(적 도시 공격 — 무장을 고르면 <b>목적지 후보 적 도시가 지도에 붉은 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>(지도 아래 띠의 [목록에서 선택]도 가능). 인접 아군 도시와 <b>합동 출진</b> → 전술 전투. 합류 도시 부대는 원군처럼 늦게 도착하고, 전투가 끝나면 무장·잔존 병력이 각자 출발 도시로 복귀).</p>' +
-    '<p><b>전투</b> : 부대별로 이동/공격/계략(화계·혼란·고무)/일기토/진형을 사용합니다. <b>이동한 뒤에도 같은 턴에 공격할 수 있습니다.</b> 병과 상성(기병→궁병→보병→기병), 진형, 지형(숲·산·성)을 활용하세요. <b>기병은 [돌격]</b>으로 최대 3칸까지 적 부대를 뚫고 반대편으로 빠져나올 수 있고, <b>보병은 2부대 이상이 모이면 [일제공격]</b>으로 같은 적을 동시에 공격합니다(반격 없음). <b>궁병은 [불화살]</b>로 적을 불태워 2라운드간 화상 피해를 남길 수 있고(부대당 2회, 숲에서 1.5배), <b>궁병이 아닌 부대가 근접 공격하면 상대의 반격</b>으로 아군도 피해를 입습니다. 전투 중에는 인접 아군 도시에서 <b>원군</b>을 보낼 수 있고, 원군은 행군에 며칠이 걸려 도착합니다(진군 상황은 전장 위쪽 상태바에 표시). <b>적도 병력이 불리해지면 원군을 보내므로</b> 상태바의 적 원군 표시를 확인하세요. 적이 우리 성을 공격하면 전투 전에 <b>수비 편성</b> 창이 열려 출진처럼 무장·병과·진형·병력을 직접 지정할 수 있습니다(창을 닫으면 자동 편성). <b>AI도 매 라운드 상황에 맞춰 진형을 바꿉니다</b>(성 수비=방원, 궁병=학익, 기병=봉시, 보병=거리별 방원·안행·어린). 진형 전환은 <b>부대마다 첫 1회가 행동을 소모하지 않습니다</b>(이후 전환은 행동 소모, AI도 동일). 전투는 최대 <b>15라운드</b>입니다. 공성전에서 <b>성을 모두 점령하면 방어측 패배</b>입니다. <b>수비측은 후퇴할 인접 아군 도시가 있으면 [후퇴]</b>로 성을 내주고 잔존 병력의 80%를 이끌고 빠져나갈 수 있습니다(무장도 함께 이동). <b>수비 편성 창에서도 [후퇴]</b>를 눌러 싸우지 않고 성을 내주고 빠져나갈 수 있습니다(편성 중 요청한 원군은 취소되어 출발 도시로 돌아갑니다). <b>[다음 턴]</b> 버튼으로 남은 부대를 대기시키고 턴을 넘길 수 있습니다.</p>' +
+    '<p><b>전투</b> : 부대별로 이동/공격/계략(화계·혼란·고무)/일기토/진형을 사용합니다. <b>이동한 뒤에도 같은 턴에 공격할 수 있습니다.</b> 병과 상성(기병→궁병→보병→기병), 진형, 지형(숲·산·성)을 활용하세요. <b>기병은 [돌격]</b>으로 최대 3칸까지 적 부대를 뚫고 반대편으로 빠져나올 수 있고, <b>보병은 2부대 이상이 모이면 [일제공격]</b>으로 같은 적을 동시에 공격합니다(반격 없음). <b>궁병은 [불화살]</b>로 적을 불태워 2라운드간 화상 피해를 남길 수 있고(부대당 2회, 숲에서 1.5배), <b>궁병이 아닌 부대가 근접 공격하면 상대의 반격</b>으로 아군도 피해를 입습니다. 전투 중에는 인접 아군 도시에서 <b>원군</b>을 보낼 수 있고, 원군은 행군에 며칠이 걸려 도착합니다(진군 상황은 전장 위쪽 상태바에 표시). <b>적도 병력이 불리해지면 원군을 보내므로</b> 상태바의 적 원군 표시를 확인하세요. 적이 우리 성을 공격하면 전투 전에 <b>수비 편성</b> 창이 열려 출진처럼 무장·병과·진형·병력을 직접 지정할 수 있습니다(창을 닫으면 자동 편성). <b>AI도 매 라운드 상황에 맞춰 진형을 바꿉니다</b>(성 수비=방원, 궁병=학익, 기병=봉시, 보병=거리별 방원·안행·어린). 진형 전환은 <b>부대마다 첫 1회가 행동을 소모하지 않습니다</b>(이후 전환은 행동 소모, AI도 동일). 전투는 최대 <b>15라운드</b>입니다. 공성전에서 <b>세 성을 살아 있는 공격 부대가 동시에 점유하면 방어측 패배</b>입니다. <b>수비측은 후퇴할 인접 아군 도시가 있으면 [후퇴]</b>로 성을 내주고 잔존 병력의 80%를 이끌고 빠져나갈 수 있습니다(무장도 함께 이동). <b>수비 편성 창에서도 [후퇴]</b>를 눌러 싸우지 않고 성을 내주고 빠져나갈 수 있습니다(편성 중 요청한 원군은 취소되어 출발 도시로 돌아갑니다). <b>[다음 턴]</b> 버튼으로 남은 부대를 대기시키고 턴을 넘길 수 있습니다.</p>' +
     '<p><b>병력과 회복</b> : 현재 병력이 많을수록 공격·반격이 강해지며, 3,000명을 넘는 대부대는 증가폭이 완만해집니다. 1,000명 미만 부대는 사기·화상 효과와 적 계략 성공률이 낮고, 화계 피해도 병력에 비례해 줄어듭니다. 일기토 신청은 부대당 전투 중 1회입니다. 고무는 반드시 성공하며, 훈련도가 100이어도 [훈련]으로 사기를 회복할 수 있습니다.</p>' +
     '<p><b>인사</b> : 등용(재야·포로 설득) · 포상(금 300, 충성도↑). 충성도가 45 미만이면 배신할 수 있습니다. 세력 수장(★)은 충성 100으로 배신·포로가 없습니다.</p>' +
     '<p><b>시기별 등장</b> : 194년 이후 인물(제갈량·사마의·강유 등)은 <b>역사적 등장 시기</b>에 맞춰 해당 지역에 나타납니다. 등장한 달에는 전황 기록에 알림이 뜨고, 그 도시를 지배하는 세력이 있으면 곧바로 합류하며, 아니면 재야로 남아 [등용]으로 설득할 수 있습니다. 아직 등장하지 않은 인물은 무장 일람에 표시되지 않습니다.</p>' +
     '<p><b>포로</b> : 전투에서 사로잡은 무장은 해당 도시에 머물며, 그 도시를 원래 세력이 되찾으면 자동으로 풀려납니다.</p>' +
-    '<p><b>외교</b> : 선물로 관계를 올리고 동맹을 맺으면 서로 공격하지 않습니다. 동맹국 도시는 별도로 표시되며, 수비 편성·전투 중 원군 목록에서 전장에 인접한 동맹국 도시에 원군을 요청할 수 있습니다(도시별 전투당 1회). 동맹국이 주둔 병력·미행동 무장·훈련·사기·군량·주변 위협·관계를 보고 승낙 여부와 파견 규모를 정하며, 교전 상대와도 동맹이면 참전하지 않습니다. 지원 부대는 전투 후 출발 도시로 복귀합니다(패전·포로 손실 적용).</p>' +
+    '<p><b>외교</b> : 동맹은 12개월, 휴전은 6개월입니다. 공동 출진은 동맹국에 3개월 동안 특정 도시 공격을 우선 검토하도록 요청합니다. 상대가 3도시 이하이고 병력·도시가 각각 4배 우세하면 항복 권고가 가능하며 종속 세력의 영토를 편입할 수 있습니다. AI도 공동의 적과 보급 사정에 따라 동맹·휴전을 선택합니다. 선물로 관계를 올리고 동맹을 맺으면 서로 공격하지 않습니다. 동맹국 도시는 별도로 표시되며, 수비 편성·전투 중 원군 목록에서 전장에 인접한 동맹국 도시에 원군을 요청할 수 있습니다(도시별 전투당 1회). 동맹국이 주둔 병력·미행동 무장·훈련·사기·군량·주변 위협·관계를 보고 승낙 여부와 파견 규모를 정하며, 교전 상대와도 동맹이면 참전하지 않습니다. 지원 부대는 전투 후 출발 도시로 복귀합니다(패전·포로 손실 적용).</p>' +
     '<p><b>사운드</b> : 상단바의 <b>♪</b>(배경음악) · <b>🔊</b>(효과음) 버튼 또는 <b>M</b> · <b>N</b> 키로 언제든 켜고 끌 수 있습니다. 설정은 브라우저에 저장되어 다음 실행에도 유지됩니다.</p>' +
     '<p class="muted">저장은 브라우저(localStorage)에 됩니다. [저장]에서 수동저장 슬롯 3개 중 원하는 위치를 고를 수 있습니다. 매달 자동저장은 별도 슬롯 3개에 최근 순으로 보관되며 수동저장을 덮어쓰지 않습니다. [불러오기]에서 수동저장 또는 자동저장을 골라 이어 할 수 있습니다. ESC로 창을 닫을 수 있습니다.</p>' +
     '<div class="foot">' +
@@ -4481,16 +4578,16 @@ function loadSaveRows(list, withIds) {
 /* 시작 화면 — 수동/자동 저장 목록 */
 function startSaveRows() {
   const list = saveSlots();
-  if (!list.length) return '';
-  return '<p class="muted" style="margin:12px 0 4px">저장된 게임 — 이어서 하기</p>' + loadSaveRows(list, false);
+  if (!list.length) return '<button onclick="Game.importSave()">JSON 가져오기</button>';
+  return '<button onclick="Game.importSave()">JSON 가져오기</button><p class="muted" style="margin:12px 0 4px">저장된 게임 — 이어서 하기</p>' + loadSaveRows(list, false);
 }
 /* 불러오기 — 수동/자동 저장을 구분해 고른다 */
 function openLoad() {
   migrateLegacySave();
   const list = saveSlots();
-  if (!list.length) { toast('저장된 게임이 없습니다'); return; }
+  if (!list.length) {showModal('<h3>불러오기</h3><p>저장된 슬롯이 없습니다.</p><button onclick="Game.importSave()">JSON 가져오기</button>');return;}
   showModal('<h3>불러오기</h3>' +
-    '<p class="muted">불러올 수동저장 또는 자동저장을 고르세요.</p>' + loadSaveRows(list, true) +
+    '<button onclick="Game.importSave()">JSON 가져오기</button><p class="muted">불러올 수동저장 또는 자동저장을 고르세요.</p>' + loadSaveRows(list, true) +
     '<div class="foot"><button onclick="Game.closeModal()">닫기</button></div>');
 }
 function saveGame(silent, manualSlot) {
@@ -4505,7 +4602,7 @@ function saveGame(silent, manualSlot) {
       rows.push('<button class="frow save-row" id="saveSlot' + n + '" onclick="Game.saveGame(false,' + n + ')">' +
         '<b>수동저장 ' + n + '</b><span class="muted">' + (meta ? saveSlotLabel(meta) : '빈 슬롯') + '</span></button>');
     }
-    showModal('<h3>수동저장</h3><p class="muted">저장할 슬롯을 고르세요. 자동저장은 별도 슬롯 3개에 보관됩니다.</p>' + rows.join('') +
+    showModal('<h3>수동저장</h3><button onclick="Game.exportSave()">JSON 내보내기</button><button onclick="Game.importSave()">JSON 가져오기</button><p class="muted">저장할 슬롯을 고르세요. 자동저장은 별도 슬롯 3개에 보관됩니다.</p>' + rows.join('') +
       '<div class="foot"><button onclick="Game.closeModal()">취소</button></div>');
     return;
   }
@@ -4546,6 +4643,10 @@ function loadGame(slot, kind = 'auto') {
   if (!data) { toast('불러오기 실패: 저장 데이터가 손상되었습니다'); return; }
   if (!data.factions[data.pf]) { toast('불러오기 실패: 저장 데이터 형식이 올바르지 않습니다'); return; }
   if (G && typeof confirm === 'function' && !confirm('현재 진행 상황을 덮어쓰고 불러옵니다. 계속할까요?')) return;
+  restoreSave(data,(kind === 'manual' ? '수동저장 ' : '자동저장 ') + n);
+}
+function restoreSave(data,label) {
+  const previous=G;
   try {
     stopAttackIntro();
     G = data;
@@ -4573,10 +4674,10 @@ function loadGame(slot, kind = 'auto') {
     selectCity(G.sel);
     bgm('map');
     sfx('load');
-    toast('불러왔습니다 — ' + G.year + '년 ' + G.month + '월 (' + (kind === 'manual' ? '수동저장 ' : '자동저장 ') + n + ')');
+    toast('불러왔습니다 — ' + G.year + '년 ' + G.month + '월 (' + label + ')');
     victoryCheck();
   } catch (e) {
-    toast('불러오기 실패: ' + e.message);
+    G=previous;toast('불러오기 실패: ' + e.message);
   }
 }
 
@@ -4597,6 +4698,7 @@ function toggleSfx() {
 const Game = {
   boot, startNew, reset, endTurn, chooseScenario,
   openOfficers, officerSort, openDiplo, openHelp,
+  openPolicies,setPolicy,openObjectives,setObjective,diploTruce,diploJoint,diploSurrender,diploAnnex,exportSave,importSave,previewImport,confirmImport,cancelImport,
   saveGame, loadGame, openLoad, toggleBgm, toggleSfx,
   closeModal, togglePick, confirmPick,
   cmdAdmin, cmdRecruit, cmdLevy, cmdTrain, cmdSupply, confirmSupply, cmdSellFood, confirmSellFood, cmdMove, cmdAttack, cmdAttackFrom,
@@ -4615,12 +4717,12 @@ const Game = {
   get view() { return view; },
   _debug: {
     newGame, applyBattleResult, autoResolve, defenseUnits, defenseUnitsFrom, defensePlan, defReinforceCandidates, aiUnits, runFactionAI,
-    applyDefReinforce,
+    applyDefReinforce,aiFieldDefense,continueSiege,unitPower,aiDiplomacy,makePact,hasPeace,policyPlan,runPolicies,objectiveStatus,parseSaveFile,validateSave,cityAt,
     aiMovePlans, execAIAct, aiDefensePower, aiFrontline, campaignDiplomacy,
     debutOfficers, syncOfficers, makeOfficer, visibleOfficers,
     distribute, cityGoldIncome, cityFoodIncome, cityFoodUpkeep, cityGoldUpkeep, capOf, factionEconomy,
     adminQuote, recruitQuote, aiRecruitPlan, monthlyProcess, addGarrison, buyFood, consumeBattleSupply, beginBattle, isLeader,
-    availableOfficers, bestAvailable, markUsed, refreshCmd,
+    availableOfficers, bestAvailable, markUsed, refreshCmd, cityRegion,expeditionRate,
     PICK_SCORE, pickSorted,
     get log() { return G ? G.log : []; }
   }

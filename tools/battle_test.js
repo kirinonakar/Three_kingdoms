@@ -44,7 +44,7 @@ global.setTimeout = fn => { if (!pauseTimers) fn(); return 0; };
 global.clearTimeout = () => {};
 
 /* ── 소스 로드 ──────────────────────────────────────── */
-const src = ['data.js', 'game.js', 'battle-terrain.js', 'battle.js']
+const src = ['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js', 'battle-terrain.js', 'battle.js']
   .map(f => fs.readFileSync(path.join(ROOT, 'js', f), 'utf8')).join('\n');
 eval(src);
 const Game = global.Game, Battle = global.Battle;

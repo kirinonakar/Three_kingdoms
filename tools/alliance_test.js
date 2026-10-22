@@ -32,7 +32,7 @@ sandbox.window = sandbox; vm.createContext(sandbox);
 const root = path.join(__dirname, '..', 'js');
 const marker = '    start, act, setStrat, setForm, reinforce, retreatTo, clickCell, observation,';
 const battle = fs.readFileSync(path.join(root, 'battle.js'), 'utf8'); assert(battle.includes(marker));
-vm.runInContext(['data.js', 'game.js', 'battle-terrain.js'].map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n') +
+vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js', 'battle-terrain.js'].map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n') +
   '\n' + battle.replace(marker, '    allianceProbe: { arriveReinforcements, end },\n' + marker), sandbox);
 const { Game, Battle } = sandbox, debug = Game._debug;
 function unit(g, name, troops = 2000) {

@@ -23,7 +23,7 @@ const sandbox = {
 };
 sandbox.window = sandbox;
 vm.createContext(sandbox);
-vm.runInContext(['data.js', 'game.js'].map(f => fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8')).join('\n'), sandbox);
+vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js'].map(f => fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8')).join('\n'), sandbox);
 const { Game } = sandbox;
 const key = (n, kind = 'auto') => 'sangokji_save_v1_' + (kind === 'manual' ? 'manual_slot' : 'slot') + n;
 const saved = (n, kind) => JSON.parse(store[key(n, kind)]);

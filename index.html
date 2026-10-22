@@ -363,20 +363,23 @@ input[type=checkbox]{accent-color:var(--gold2)}
 /* ── 전투 (전체화면) ───────────────────── */
 .battle-bg{position:fixed;inset:0;z-index:90;display:flex;background:radial-gradient(120% 100% at 50% 0%,#15211a,#080d0a 62%,#050806);animation:fade .18s ease-out}
 .battle-wrap{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;border:0;border-radius:0;background:transparent;box-shadow:none;overflow:hidden}
-.battle-head{flex:none;display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:9px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#1c2820e6,#111a15cc)}
+.battle-head{height:52px;flex:0 0 52px;display:flex;align-items:center;gap:16px;padding:9px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#1c2820e6,#111a15cc)}
+.bh-details{flex:1;min-width:0;height:100%;display:flex;align-items:center;gap:16px;overflow-x:auto;overflow-y:hidden;white-space:nowrap;scrollbar-width:thin}
+.bh-details>*{flex-shrink:0}
+.bh-details:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
 .battle-head b{font-family:var(--serif);font-size:17px;color:var(--gold);letter-spacing:.03em}
 .bh-vs{display:flex;align-items:center;gap:8px;font-size:12.5px}
 .bh-vs .side{padding:2px 9px;border-radius:99px;border:1px solid #ffffff1a;background:#ffffff08}
 .bh-vs .vs{color:var(--muted);font-size:10px;letter-spacing:.14em}
 .battle-head .muted{font-size:11px}
 /* 전투 화면 사운드 토글 — 상단바가 가려지므로 전장 헤더에도 둔다 */
-.bh-sound{display:flex;align-items:center;gap:5px;margin-left:auto}
+.bh-sound{flex:none;display:flex;align-items:center;gap:5px}
 .bh-sound button{width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:1;border-radius:8px;background:linear-gradient(180deg,#1c2b21,#121c16)}
 .bh-sound button.on{color:var(--gold);border-color:#8a6a33}
 .bh-sound button.off{color:#7d8f81;opacity:.5}
 #bRoundInfo{margin-left:auto;font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums;background:#0d1511;border:1px solid #ffffff12;padding:4px 10px;border-radius:99px}
 /* 상단 상태바 — 원군 진군 현황 */
-.bh-reinf{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.bh-reinf{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
 .bh-reinf .ri{
   display:flex;align-items:center;gap:6px;font-size:11px;line-height:1.3;white-space:nowrap;
   padding:3px 9px;border-radius:99px;border:1px solid #ffffff14;background:#0d1511;color:var(--ink2);
@@ -467,6 +470,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
 }
 @media (max-width:640px){
   .battle-head{padding:8px 10px;gap:8px}
+  .bh-details{gap:8px}
   .battle-head .muted{display:none}
   .terrain-legend{gap:6px 10px;font-size:10px}
   #topbar{padding:8px 10px;gap:8px}
@@ -532,6 +536,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
       <button id="btnSave" class="ghost" onclick="Game.saveGame()" title="수동저장 (슬롯 3개 중 선택)">저장</button>
       <button id="btnLoad" class="ghost" onclick="Game.openLoad()" title="불러오기 (수동저장 3개 · 자동저장 3개)">불러오기</button>
       <button id="btnTitle" class="ghost" onclick="Game.toTitle()" title="타이틀 화면으로 돌아가기">타이틀로</button>
+      <button id="btnPolicies" onclick="Game.openPolicies()">위임·목표</button>
       <button id="btnHelp" class="ghost" onclick="Game.openHelp()" title="도움말">도움말</button>
       <button id="btnEndTurn" class="primary" onclick="Game.endTurn()">턴 종료 <span class="arrow">▶</span></button>
     </div>
@@ -567,6 +572,9 @@ input[type=checkbox]{accent-color:var(--gold2)}
 <script src="js/sword-samples.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/data.js"></script>
+<script src="js/combat-rules.js"></script>
+<script src="js/strategy-systems.js"></script>
+<script src="js/save-transfer.js"></script>
 <script src="js/game.js"></script>
 <script src="js/battle-terrain.js"></script>
 <script src="js/battle.js"></script>

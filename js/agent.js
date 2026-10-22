@@ -22,7 +22,7 @@ window.GameAgent = (function () {
         goldIncome: cityGoldIncome(c), foodIncome: cityFoodIncome(c),
         foodConsumption: cityFoodUpkeep(c),
         goldConsumption: cityGoldUpkeep(c),
-        recruited: !!c.recruited,
+        recruited: !!c.recruited, policy:c.policy||'manual', region:cityRegion(c).label,
         availableOfficers: g.officers.filter(o => o.city === c.name && o.status === 'active' &&
           o.faction === c.owner && !o.used).map(o => o.name)
       })),
@@ -91,7 +91,7 @@ window.GameAgent = (function () {
     const toast = document.getElementById('toast');
     const out = {
       version: 1, phase, status: waiting ? 'waiting' : phase === 'gameOver' ? 'finished' : 'ready',
-      objective: '30개 도시를 모두 점령해 천하통일. 보유 도시가 0개면 패배.',
+      objective: g?objectiveStatus().label:'세력과 시나리오를 선택하세요.',
       dialog: modal ? { title: text(modal.querySelector('h2, h3')), text: text(modal) } : null,
       message: toast && toast.classList.contains('show') ? text(toast) : '',
       strategy: title ? null : strategy(g), battle: b,

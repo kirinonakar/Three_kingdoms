@@ -63,7 +63,7 @@ global.Battle = {
 
 /* ── 소스 로드 ──────────────────────────────────────── */
 const dataSrc = fs.readFileSync(path.join(ROOT, 'js', 'data.js'), 'utf8');
-const gameSrc = fs.readFileSync(path.join(ROOT, 'js', 'game.js'), 'utf8');
+const gameSrc = fs.readFileSync(path.join(ROOT, 'js', 'combat-rules.js'), 'utf8') + '\n' + ['strategy-systems.js','save-transfer.js','game.js'].map(f=>fs.readFileSync(path.join(ROOT,'js',f),'utf8')).join('\n');
 const battleSrc = fs.readFileSync(path.join(ROOT, 'js', 'battle.js'), 'utf8');
 
 // 데이터 테이블을 테스트 쪽으로 꺼내온다 (eval 완료값 사용)

@@ -14,7 +14,7 @@ const sandbox={console,Math:math,document:{getElementById:el,querySelectorAll:()
 sandbox.window=sandbox;vm.createContext(sandbox);
 const marker='    start, act, setStrat, setForm, reinforce, retreatTo, clickCell, observation,';
 const source=fs.readFileSync(path.join(root,'js/battle.js'),'utf8');assert(source.includes(marker));
-vm.runInContext(['data.js','game.js','battle-terrain.js'].map(f=>fs.readFileSync(path.join(root,'js',f),'utf8')).join('\n')+'\n'+
+vm.runInContext(['data.js','combat-rules.js','strategy-systems.js','save-transfer.js','game.js','battle-terrain.js'].map(f=>fs.readFileSync(path.join(root,'js',f),'utf8')).join('\n')+'\n'+
   source.replace(marker,'    supplyProbe: { roundStart, end },\n'+marker),sandbox);
 const {Game,Battle}=sandbox,d=Game._debug,p=Battle.supplyProbe;
 function fresh(){Game.startNew('cao','194');return Game.state;}

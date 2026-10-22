@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const root = path.join(__dirname, '..'), sandbox = {};
 sandbox.window = sandbox;
 vm.createContext(sandbox);
-vm.runInContext(['data.js', 'game.js'].map(f => fs.readFileSync(path.join(root, 'js', f), 'utf8')).join('\n') +
+vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js'].map(f => fs.readFileSync(path.join(root, 'js', f), 'utf8')).join('\n') +
   '\nthis.regions = mapTerritories(); this.cities = CITY_DEFS; this.project = projMap;', sandbox);
 
 function inside(point, polygon) {

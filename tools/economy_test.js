@@ -13,7 +13,7 @@ const sandbox = {console, Math:math, document:{getElementById:el,querySelectorAl
   localStorage:{getItem:k=>store[k]||null,setItem:(k,v)=>store[k]=String(v)},
   setTimeout:()=>0,clearTimeout:noop,confirm:()=>true};
 sandbox.window = sandbox; vm.createContext(sandbox);
-vm.runInContext(['data.js','game.js'].map(f=>fs.readFileSync(path.join(root,'js',f),'utf8')).join('\n')+
+vm.runInContext(['data.js','combat-rules.js','strategy-systems.js','save-transfer.js','game.js'].map(f=>fs.readFileSync(path.join(root,'js',f),'utf8')).join('\n')+
   '\nthis.scenarios=SCENARIOS;',sandbox);
 const {Game} = sandbox, d = Game._debug;
 const fresh = () => { Game.startNew('cao','194'); return Game.state; };

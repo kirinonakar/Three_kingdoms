@@ -23,18 +23,12 @@ const Battle = (function () {
   // 혼란 상태 — 이동·공격·계략·일기토·진형 전부 불가 (반격도 불가)
   function isConfused(u) { return !!u && (u.confused > 0 || u.confusedNow); }
   function unitAt(x, y) { return B.units.find(u => u.alive && u.x === x && u.y === y); }
-  function counter(a, b) {
-    if (a === '기병' && b === '궁병') return 1.30;
-    if (a === '궁병' && b === '보병') return 1.20;
-    if (a === '보병' && b === '기병') return 1.20;
-    return 1.0;
-  }
+
 
   // 3,000명 기준 전투력. 그 아래는 병력에 비례하고, 대부대는 점차 완만하게 증가한다.
   // 최초 편성 병력(max)에 기대지 않아 병력을 쪼개거나 재편성해도 전투력이 복제되지 않는다.
   function troopStrength(u) {
-    const ratio = Math.max(0, u.troops) / 3000;
-    return Math.min(ratio, Math.sqrt(ratio));
+    return CombatRules.strength(u);
   }
   // 소수 별동대가 대군의 사기를 깎거나 계략으로 무력화하는 효과를 제한한다.
   function tacticalScale(u) { return Math.min(1, Math.max(0, u.troops) / 1000); }
@@ -60,7 +54,7 @@ const Battle = (function () {
     B.units.forEach(u => { if (u.troops <= 0) { u.alive = false; } });
     place();
     buildUI();
-    bLog('⚔ ' + opts.atk.name + '군 vs ' + opts.def.name + '군 — ' + opts.city.name + (opts.siege ? ' 공성전' : ' 전투') + ' 개시!');
+    bLog('⚔ ' + opts.atk.name + '군 vs ' + opts.def.name + '군 — ' + opts.city.name + (opts.siege ? ' 공성전' : ' 야전') + ' 개시!');
     sfx('battleStart');
     bgm('battle');
     roundStart();
@@ -190,11 +184,13 @@ const Battle = (function () {
     root.innerHTML =
       '<div class="battle-bg"><div class="battle-wrap">' +
         '<div class="battle-head">' +
-          '<b>' + B.opts.city.name + (B.opts.siege ? ' 공성전' : ' 전투') + '</b>' +
+          '<div class="bh-details" role="region" aria-label="전투 정보 · 좌우로 스크롤" tabindex="0">' +
+          '<b>' + B.opts.city.name + (B.opts.siege ? ' 공성전' : ' 야전') + '</b>' +
           '<span class="bh-vs"><span class="side">' + B.opts.atk.name + '군</span><span class="vs">VS</span><span class="side">' + B.opts.def.name + '군</span></span>' +
-          '<span class="muted">숲 +15% · 산 +25% · 성 +40%' + (B.opts.siege ? ' · 방어도 ' + (B.opts.city.def || 50) : '') + '</span>' +
+          '<span class="muted">숲 +15% · 산 +25%' + (B.opts.siege?' · 성 +40%':'') + (B.opts.siege ? ' · 방어도 ' + (B.opts.city.def || 50) : '') + '</span>' +
           '<span id="bReinfInfo" class="bh-reinf"></span>' +
           '<span id="bRoundInfo"></span>' +
+          '</div>' +
           '<span class="bh-sound">' +
             '<button type="button" id="bBgm" class="on" onclick="Battle.toggleBgm()" title="배경음악 켜짐 (M)" aria-label="배경음악 켜기/끄기" aria-pressed="true">♪</button>' +
             '<button type="button" id="bSfx" class="on" onclick="Battle.toggleSfx()" title="효과음 켜짐 (N)" aria-label="효과음 켜기/끄기" aria-pressed="true">🔊</button>' +
@@ -204,7 +200,7 @@ const Battle = (function () {
           '<div class="battle-map">' +
             '<div class="battle-geography"><div><b>' + B.geo.region + '</b><span>' + B.geo.detail + '</span></div><span class="north">↑ 북</span></div>' +
             '<canvas id="battleCanvas" aria-label="' + B.opts.city.name + ' 전술 전장" width="' + (COLS * TILE) + '" height="' + (ROWS * TILE) + '"></canvas>' +
-            '<div class="terrain-legend"><span><i class="land"></i>평지</span><span><i class="forest"></i>숲 +15%</span><span><i class="mountain"></i>산 +25%</span><span><i class="fort"></i>성 +40%</span><span><i class="water"></i>물 · 진입 불가</span><span><i class="ford"></i>여울 · 도하 가능</span></div>' +
+            '<div class="terrain-legend"><span><i class="land"></i>평지</span><span><i class="forest"></i>숲 +15%</span><span><i class="mountain"></i>산 +25%</span>' + (B.opts.siege?'<span><i class="fort"></i>성 +40%</span>':'') + '<span><i class="water"></i>물 · 진입 불가</span><span><i class="ford"></i>여울 · 도하 가능</span></div>' +
             '<div class="map-hint" id="bTerrainInfo"></div>' +
             '<details class="text-board battle-directory" id="bDirectory"><summary>전장 목록 · 좌표로 조작</summary><div id="bTextBoard"></div></details>' +
           '</div>' +
@@ -216,7 +212,7 @@ const Battle = (function () {
             '<div class="battle-foot">' +
               '<button id="bReinf" onclick="Battle.act(\'reinforce\')">원군</button>' +
               '<button id="bAuto" onclick="Battle.act(\'auto\')">자동 진행</button>' +
-              ((B.playerSide === 'atk' || retreatCities().length) ?
+              ((B.playerSide === 'atk' || !B.opts.siege || retreatCities().length) ?
                 '<button id="bRetreat" onclick="Battle.act(\'retreat\')"' +
                   (B.playerSide === 'def' ? ' title="잔존 병력을 이끌고 다른 도시로 후퇴"' : '') + '>후퇴</button>' : '') +
               '<button id="bNext" onclick="Battle.act(\'nextTurn\')" title="남은 부대를 대기시키고 다음 턴으로">다음 턴 ▶</button>' +
@@ -270,6 +266,8 @@ const Battle = (function () {
       '<div class="ut-grid"><span>병력</span><b>'+commas(u.troops)+' / '+commas(u.max)+'</b><span>훈련 · 사기</span><b>'+u.training+' · '+u.morale+'</b>'+
       '<span>무력 · 지력</span><b>'+o.wu+' · '+o.zhi+'</b><span>정치 · 매력</span><b>'+o.pol+' · '+o.cha+'</b></div>'+
       (sk?'<p class="ut-skill">'+escape(o.skill)+' · '+escape(sk.desc)+'</p>':'')+
+      (CombatRules.description(o)?'<p class="ut-skill">'+escape(CombatRules.description(o))+'</p>':'')+
+      '<p>'+CombatRules.bonuses(u,alive(u.side),alive(u.side).filter(a=>mdist(a,u)<=2)).labels.join(' · ')+'</p>'+
       '<p>'+escape(BRANCHES[u.branch].desc)+'</p><p>'+escape((FORMS[u.form]||{}).desc||'')+'</p>'+
       (u.branch==='궁병'?'<p>불화살 '+fireLeft(u)+'회 남음</p>':'')+
       (fortAt(u.x,u.y)?'<p class="ut-skill">성 주둔 · 지형 방어 +40%</p>':'');
@@ -611,7 +609,7 @@ const Battle = (function () {
     opt.through.forEach((p, i) => {
       const foe = p.unit;
       if (!foe || !foe.alive) return;
-      const dmg = Math.max(1, Math.round(calcDamage(u, foe) * CHARGE_RATE));
+      const dmg = Math.max(1, Math.round(calcDamage(u, foe) * CHARGE_RATE * (CombatRules.talent(u).charge || 1)));
       foe.troops = Math.max(0, foe.troops - dmg);
       foe.morale = cl(foe.morale - Math.round(ri(2, 6) * tacticalScale(u)), 0, 100);
       fx('slash', u, foe, { delay: ride + 60 + i * 180 });
@@ -689,7 +687,7 @@ const Battle = (function () {
     const drop = Math.round(ri(6, 14) * tacticalScale(u));
     d.troops = Math.max(0, d.troops - dmg);
     d.morale = cl(d.morale - drop, 0, 100);
-    const burnRate = FIRE_BURN_RATE * tacticalScale(u);
+    const burnRate = FIRE_BURN_RATE * tacticalScale(u) * (B.terrain[d.y][d.x]===3?.5:1);
     if (!d.burn || burnRate >= d.burnRate) {
       d.burn = FIRE_BURN_TURNS;
       d.burnRate = burnRate;
@@ -735,21 +733,10 @@ const Battle = (function () {
   }
 
   function calcDamage(a, d) {
-    const sa = SKILLS[a.officer.skill] || {}, sd = SKILLS[d.officer.skill] || {};
-    const fa = FORMS[a.form] || FORMS['안행'], fd = FORMS[d.form] || FORMS['안행'];
-    let A = (a.officer.wu * 0.55 + a.training * 0.35 + a.morale * 0.10) * (sa.atk || 1) * fa.atk;
-    if (fa.cav && a.branch === '기병') A *= fa.cav;
-    if (fa.bow && a.branch === '궁병') A *= fa.bow;
-    A *= BRANCHES[a.branch].atk;
-    A *= counter(a.branch, d.branch);
-    let D = (d.officer.wu * 0.45 + d.training * 0.35 + d.morale * 0.20) * (sd.def || 1) * fd.def * BRANCHES[d.branch].def;
-    const t = B.terrain[d.y][d.x];
-    if (t === 1) D *= 1.15; else if (t === 2) D *= 1.25; else if (t === 3) D *= 1.40;
-    // 도시 방어도(수복) — 수비측 피해 경감
-    if (d.side === 'def' && B.cityDef) D *= 1 + B.cityDef / 400;
-    let dmg = (A * 0.9 - D * 0.45) / 100 * 3000 * 1.15 * rnd(0.8, 1.2);
-    if (mdist(a, d) > 1) dmg *= 0.85;
-    return Math.max(1, Math.round(Math.max(90, dmg) * troopStrength(a)));
+    const alliesA=alive(a.side),alliesD=alive(d.side);
+    return CombatRules.damage(a,d,{terrain:B.terrain[d.y][d.x],cityDef:d.side==='def'?B.cityDef:0,
+      random:rnd(.8,1.2),ranged:mdist(a,d)>1,alliesA,alliesD,
+      nearbyA:alliesA.filter(u=>mdist(u,a)<=2),nearbyD:alliesD.filter(u=>mdist(u,d)<=2)});
   }
 
   // 궁병이 아닌 부대가 근접 공격하면 상대의 반격을 받는다
@@ -770,6 +757,8 @@ const Battle = (function () {
     const counterImpact = tacticalScale(d);
     d.troops = Math.max(0, d.troops - dmg);
     d.morale = cl(d.morale - Math.round(ri(3, 8) * tacticalScale(a)), 0, 100);
+    const fear=Math.round((CombatRules.talent(a).fear||0)*tacticalScale(a));
+    if(!ranged&&fear) {d.morale=cl(d.morale-fear,0,100);bLog('장판의 포효 — '+d.name+' 사기 -'+fear);}
     a.acted = true;
     fx(ranged ? 'arrow' : 'slash', a, d);
     sfx(ranged ? 'arrow' : 'slash');
@@ -796,7 +785,7 @@ const Battle = (function () {
     if (!B || B.over || !a.alive || !d.alive || a.acted || !duelTargets(a).includes(d)) return;
     a.dueled = true;
     const sa = SKILLS[a.officer.skill] || {}, sd = SKILLS[d.officer.skill] || {};
-    const p = cl(0.5 + (a.officer.wu - d.officer.wu) * 0.012 + (sa.duel || 0) - (sd.duel || 0), 0.08, 0.92);
+    const p = cl(0.5 + (a.officer.wu - d.officer.wu) * 0.012 + (sa.duel || 0) - (sd.duel || 0) + (CombatRules.talent(a).duel || 0) - (CombatRules.talent(d).duel || 0), 0.08, 0.92);
     const win = Math.random() < p;
     const w = win ? a : d, l = win ? d : a;
     const impact = tacticalScale(w);
@@ -805,6 +794,8 @@ const Battle = (function () {
     const moraleLoss = Math.round(25 * impact);
     l.morale = cl(l.morale - moraleLoss, 0, 100);
     w.morale = cl(w.morale + 10, 0, 100);
+    const rally=CombatRules.talent(w).rally||0;
+    if(rally) {alive(w.side).filter(x=>x!==w&&mdist(x,w)<=2).forEach(x=>{x.morale=cl(x.morale+Math.round(rally*impact),0,100);});bLog('관우의 무신의 위엄 — 인접 아군 사기 상승');}
     a.acted = true;
     fx('duel', a, d);
     B.floats.push({ x: l.x, y: l.y, text: '일기토 패!' });
@@ -821,6 +812,9 @@ const Battle = (function () {
     const sa = SKILLS[u.officer.skill] || {}, sd = SKILLS[d.officer.skill] || {};
     let p = 0.42 + (u.officer.zhi - d.officer.zhi) * 0.010 + (sa.strat || 0) - (sd.resist || 0);
     if (type === '화계') p -= 0.05;
+    if(type==='혼란') p+=CombatRules.talent(u).confuse||0;
+    p-=CombatRules.bonuses(d,alive(d.side)).resist;
+    if(type!=='고무'&&B.terrain[d.y][d.x]===3)p-=.10;
     p = type === '고무' ? 1 : cl(p, 0.08, 0.93) * tacticalScale(u);
     if (Math.random() > p) {
       bLog('✖ ' + u.name + '의 ' + type + ' 실패! (성공률 ' + Math.round(p * 100) + '%)');
@@ -831,6 +825,9 @@ const Battle = (function () {
     if (type === '화계') {
       const t = B.terrain[d.y][d.x];
       let dmg = Math.round((u.officer.zhi * 18 + ri(100, 400)) * (t === 1 ? 1.5 : 1) * Math.min(1, troopStrength(u)));
+      const water=[[0,0],[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy])=>[4,5].includes(B.terrain[u.y+dy]?.[u.x+dx]));
+      dmg=Math.round(dmg*(CombatRules.talent(u).fire||1)*(CombatRules.talent(u).fire&&water?1.1:1));
+      if(B.terrain[d.y][d.x]===3) dmg=Math.round(dmg*.65);
       dmg = Math.min(dmg, Math.round(d.troops * 0.85));
       d.troops = Math.max(0, d.troops - dmg);
       d.morale = cl(d.morale - Math.round(ri(5, 12) * tacticalScale(u)), 0, 100);
@@ -892,6 +889,7 @@ const Battle = (function () {
   function retreat() {
     if (!B || B.over) return;
     if (B.playerSide === 'def') {
+      if(!B.opts.siege) {bLog('수비군이 성 안으로 물러나 농성합니다.');end('attacker',{fieldRetreat:true});return;}
       const cands = retreatCities();
       if (!cands.length) { bLog('🏳 후퇴할 다른 도시가 없습니다.'); return; }
       if (cands.length === 1) { retreatTo(cands[0].name); return; }
@@ -1070,12 +1068,13 @@ const Battle = (function () {
       if (u.side === 'atk') {
         const rest = forts.filter(f => f.owner !== u.side)
           .sort((a, b) => mdist(u, a) - mdist(u, b));
+        if(alive('atk').length>=forts.length) return {hold:true,fort:here};
         return rest[0] ? { hold: false, fort: rest[0] } : null;
       }
       // 수비 중이어도 적이 비워둔 빼앗긴 성이 가까우면 되찾으러 간다 (성은 비어도 깃발이 유지된다)
       const stray = forts.filter(f => f.owner === foe && !unitAt(f.x, f.y))
         .sort((a, b) => mdist(u, a) - mdist(u, b))[0];
-      if (stray && mdist(u, stray) <= 4) return { hold: false, fort: stray };
+      if (stray && mdist(u, stray) <= 2 && !B.units.some(e=>e.alive&&e.side!==u.side&&mdist(e,here)<=3)) return { hold: false, fort: stray };
       return { hold: true, fort: here };                                    // 수비 중
     }
     const lost = forts.filter(f => f.owner === foe);                       // 빼앗긴 성
@@ -1157,7 +1156,7 @@ const Battle = (function () {
 
   /* 성곽(성) 타일 — 점령한 편의 깃발이 꽂히고, 전부 넘어가면 방어측 패배 */
   function fortTiles() {
-    if (!B) return [];
+    if (!B || !B.opts.siege) return [];
     if (!B.forts) {
       B.forts = [];
       for (let y = 0; y < ROWS; y++)
@@ -1203,8 +1202,8 @@ const Battle = (function () {
     const forts = fortTiles();
     if (!forts.length) return false;
     syncForts(true);
-    if (!forts.every(f => f.owner === 'atk')) return false;
-    bLog('🏯 성이 모두 점령당했습니다 — ' + B.opts.def.name + ' 패배!');
+    if (!forts.every(f => f.owner === 'atk' && unitAt(f.x,f.y)?.side==='atk')) return false;
+    bLog('🏯 모든 성을 공격군이 동시에 점유했습니다 — ' + B.opts.def.name + ' 패배!');
     end('attacker');
     return true;
   }
@@ -1226,10 +1225,10 @@ const Battle = (function () {
       units: (p.units || []).map(u => ({ name: u.officer ? u.officer.name : '', troops: u.troops }))
     }));
     const res = {
-      winner,
+      winner, fieldRetreat: !!(extra && extra.fieldRetreat),
       // 전멸 무장도 0명으로 보고해야 전략 지도의 포로·귀환 처리가 누락되지 않는다.
-      atk: B.units.filter(u => u.side === 'atk').map(u => ({ name: u.name, troops: u.troops })),
-      def: B.units.filter(u => u.side === 'def').map(u => ({ name: u.name, troops: u.troops })),
+      atk: B.units.filter(u => u.side === 'atk').map(u => ({ name: u.name, troops: u.troops, morale:u.morale, training:u.training, branch:u.branch, form:u.form })),
+      def: B.units.filter(u => u.side === 'def').map(u => ({ name: u.name, troops: u.troops, morale:u.morale, training:u.training, branch:u.branch, form:u.form })),
       captured: [], pending, rounds: Math.min(B.round,B.maxRound), supply: B.supply
     };
     if (B.retreatTo) res.retreatTo = B.retreatTo;
@@ -2741,6 +2740,7 @@ const Battle = (function () {
         el.innerHTML = '<div class="bn">부대를 선택하세요</div><div class="muted">내 부대를 클릭하거나 [자동 진행]으로 위임할 수 있습니다.</div>';
       } else {
         const sk = SKILLS[u.officer.skill];
+        const trait=[CombatRules.description(u.officer),...CombatRules.bonuses(u,alive(u.side),alive(u.side).filter(a=>mdist(a,u)<=2)).labels].filter(Boolean).join(' · ');
         // 클릭 즉시 행동 안내 — 선택만 해도 이동·공격 영역이 보인다
         const canPoint = !u.acted && !isConfused(u) && B.side === B.playerSide && !B.auto && (B.mode === 'select' || B.mode === 'move');
         const clicks = [];
@@ -2760,6 +2760,7 @@ const Battle = (function () {
             (u.branch === '궁병' ? '<span class="badge2" style="color:#ffb070">불화살 ' + fireLeft(u) + '</span>' : '') +
             (fortAt(u.x, u.y) ? '<span class="badge2" style="color:#ffd479">성 안 · 방어 +40%</span>' : '') +
             (sk ? '<span class="badge2" style="color:var(--gold)">' + u.officer.skill + '</span>' : '') + '</div>' +
+          (trait?'<p class="muted">'+trait+'</p>':'') +
           '<div class="kv"><span>병력</span><b>' + commas(u.troops) + ' / ' + commas(u.max) + '</b>' +
             '<span>사기·훈련</span><b>' + u.morale + ' · ' + u.training + '</b>' +
             '<span>무력·지력</span><b>' + u.officer.wu + ' · ' + u.officer.zhi + '</b></div>' +
@@ -2814,7 +2815,8 @@ const Battle = (function () {
     const reinfBtn = $('bReinf');
     if (reinfBtn) reinfBtn.disabled = B.over || B.busy || B.auto || !B.opts.onReinforce;
     const retBtn = $('bRetreat');
-    if (retBtn) retBtn.disabled = B.over || B.busy || B.auto || (B.playerSide === 'def' && !retreatCities().length);
+    if (retBtn) retBtn.textContent=B.playerSide==='def'&&!B.opts.siege?'성으로 후퇴':'후퇴';
+    if (retBtn) retBtn.disabled = B.over || B.busy || B.auto || (B.playerSide === 'def' && B.opts.siege && !retreatCities().length);
     renderTextBoard();
     draw();
   }

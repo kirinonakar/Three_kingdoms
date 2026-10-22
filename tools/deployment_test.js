@@ -40,7 +40,7 @@ const sandbox = { console,
     reinforce(units, side, opts) { reinforcements.push({ units, side, ...opts }); return true; }, reinforceDays: 3 }
 };
 sandbox.window = sandbox; vm.createContext(sandbox);
-vm.runInContext(['data.js', 'game.js'].map(f => fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8')).join('\n'), sandbox);
+vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js'].map(f => fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8')).join('\n'), sandbox);
 const { Game } = sandbox;
 function fixture(troops = 1201) {
   starts = []; reinforcements = []; Game.startNew('cao');
