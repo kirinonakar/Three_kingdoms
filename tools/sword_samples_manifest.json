@@ -1,0 +1,30 @@
+[
+  {
+    "file": "Sabre Katana Blade on Blade.wav",
+    "impact_seconds": 0.46,
+    "duration": 0.46,
+    "source_sha256": "92b086e5cc7209fcb28a715e7ae76446d6f0d5bab39098fda8288e2ef36ca6d6",
+    "pcm_sha256": "b935324d8fd7e2ad6b4a513e8acf70c41ecd1004f6f1feddee3d558deca75236"
+  },
+  {
+    "file": "Sabre Katana Blade on Blade.wav",
+    "impact_seconds": 2.65,
+    "duration": 0.5,
+    "source_sha256": "92b086e5cc7209fcb28a715e7ae76446d6f0d5bab39098fda8288e2ef36ca6d6",
+    "pcm_sha256": "8471bc04f59a7c1d09c1d029760f8e2686db37fbe6caff3245a9b32711cc55f3"
+  },
+  {
+    "file": "Norse Sword Katana Blade on Blade.wav",
+    "impact_seconds": 13.86,
+    "duration": 0.52,
+    "source_sha256": "612c512a890233f9a4475e2317190dc05cb2560add2bd0e5a93d6665e4e0c53f",
+    "pcm_sha256": "56ca27fb8190073587898918bbcec6aeb75f6f6e679ed2694ffe8eb1e1d72c62"
+  },
+  {
+    "file": "Sabre Norse Sword Blade on Blade.wav",
+    "impact_seconds": 12.46,
+    "duration": 0.48,
+    "source_sha256": "3e1067e8d955d04de67a173f9c9430f9283663fc3ad0192b007fa3f68f256701",
+    "pcm_sha256": "4008036ebe2c27a8984c41dadf355ce8617da0b1b7f0ba08d2bc7069c3bed2de"
+  }
+]
