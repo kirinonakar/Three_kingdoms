@@ -14,6 +14,17 @@ const rnd = (a, b) => a + Math.random() * (b - a);
 const ri = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
 const cl = (v, a, b) => Math.max(a, Math.min(b, v));
 const commas = n => Math.round(n).toLocaleString('ko-KR');
+const MAP_WIDTH = 1200, MAP_HEIGHT = 1000;
+
+/* 현재 보이는 영역만 고해상도로 저장한다. 제스처 중에는 이전 프레임을 변환해 쓴다. */
+function paintViewportRaster(ctx, layer, target, width, height, pixelWidth, pixelHeight) {
+  const source=layer.__view, ratio=target.scale/source.scale;
+  const sx=pixelWidth/width, sy=pixelHeight/height;
+  ctx.save();
+  ctx.setTransform(sx*ratio,0,0,sy*ratio,sx*(target.px-source.px*ratio),sy*(target.py-source.py*ratio));
+  ctx.drawImage(layer,0,0,width,height);
+  ctx.restore();
+}
 
 /* 지도와 전장이 공유하는 포인터 탐색. 제스처 뒤의 합성 클릭은 명령으로 넘기지 않는다. */
 function bindCanvasNavigation(canvas, { size, read, write, tap, enabled = () => true, begin = () => {}, end = () => {} }) {
@@ -732,7 +743,7 @@ function boot() {
     new ResizeObserver(() => { if (G) drawMap(); }).observe(cvM);
   }
   const navigation = bindCanvasNavigation(cvM, {
-    size: () => ({ width: cvM.width, height: cvM.height, maxScale: VIEW_MAX }),
+    size: () => ({ width: MAP_WIDTH, height: MAP_HEIGHT, maxScale: VIEW_MAX }),
     read: () => view,
     write: next => { Object.assign(view, next); viewClamp(); syncGoal(); drawMap(); },
     enabled: () => !attackIntro && !!G && !G.battleActive,
@@ -818,12 +829,12 @@ function bindSfx() {
 }
 function toCanvas(e) {
   const r = cvM.getBoundingClientRect();
-  return { x: (e.clientX - r.left) * (cvM.width / r.width), y: (e.clientY - r.top) * (cvM.height / r.height) };
+  return { x: (e.clientX - r.left) * (MAP_WIDTH / r.width), y: (e.clientY - r.top) * (MAP_HEIGHT / r.height) };
 }
 /* 월드 좌표 기준 도시 판정. 축소 화면에서도 CSS 24px 반경, 겹치면 가장 가까운 도시. */
 function cityAt(x, y) {
   const rect=cvM?.getBoundingClientRect();
-  const cssScale=rect?.width?cvM.width/rect.width:1;
+  const cssScale=rect?.width?MAP_WIDTH/rect.width:1;
   const screen=screenFromWorld(x,y);
   // 확대된 이름표도 도시 표식과 똑같이 눌러 선택할 수 있다.
   if (cityLabelCache) {
@@ -988,15 +999,16 @@ function jitter(i, s) {
    실제 경위도 데이터(MAP_TERRAIN)를 그대로 투영해 해안선·산맥·하천·호수를
    그리고, 정적인 부분은 오프스크린 캔버스에 한 번만 그려 캐시한다. */
 let terrainLayer = null;
-const terrainCache = new Map();   // 크기·배율별 지형 레이어 (최근 몇 개만 유지)
+let terrainBaseLayer = null;
+const terrainCache = new Map();   // 보이는 영역별 지형 레이어 (최근 두 개만 유지)
 let terrainOwnership = '';        // 소유권이 바뀌면 모든 배율의 영토색도 갱신
-function terrainFor(tkey, tq, size) {
+function terrainFor(tkey, camera, size) {
   let c = terrainCache.get(tkey);
   if (!c) {
-    c = buildTerrainLayer(tq);
+    c = buildTerrainLayer(camera);
     c.__key = tkey; c.__size = size;
     terrainCache.set(tkey, c);
-    if (terrainCache.size > 6) terrainCache.delete(terrainCache.keys().next().value);
+    if (terrainCache.size > 2) terrainCache.delete(terrainCache.keys().next().value);
   }
   return c;
 }
@@ -1307,17 +1319,17 @@ const TERRAIN_FILL = {
   forest:  '#3c5c3b'    // 강남·만주 삼림
 };
 
-/* 정적 지형 레이어(바다·대륙·산맥·하천)를 한 번만 그려 캐시.
-   zoom 배율만큼 큰 캔버스에 그리므로 확대해도 선이 뭉개지지 않는다. */
-function buildTerrainLayer(zoom) {
-  const W = cvM.width, H = cvM.height, T = MAP_TERRAIN;
+/* 확대된 세계 전체 대신, 보이는 지형을 화면 픽셀에 직접 그려 캐시한다. */
+function buildTerrainLayer(camera) {
+  const W = MAP_WIDTH, H = MAP_HEIGHT, T = MAP_TERRAIN;
   const SERIF = '"Batang","바탕",serif';
-  const q = zoom || 1;
   const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.round(W * q));
-  c.height = Math.max(1, Math.round(H * q));
+  c.width = cvM.width;
+  c.height = cvM.height;
+  c.__view = { ...camera };
   const x = c.getContext('2d');
-  x.scale(q, q);
+  const sx=c.width/W,sy=c.height/H;
+  x.setTransform(sx*camera.scale,0,0,sy*camera.scale,sx*camera.px,sy*camera.py);
 
   /* 바다 */
   const og = x.createLinearGradient(0, 0, W * 0.7, H);
@@ -1513,7 +1525,7 @@ function buildTerrainLayer(zoom) {
   return c;
 }
 
-// 지형 레이어에만 그려 확대·부대 조작 때는 재생성하지 않는다.
+// 지형 레이어에만 그린다. 확대·이동 완료 후 새 해상도에서 다시 선명하게 그린다.
 function drawLandscapeDetail(x, terrain) {
   terrain.regions.forEach((region,ri)=>{
     const P=projPts(region.pts), xs=P.map(p=>p[0]),ys=P.map(p=>p[1]);
@@ -1562,13 +1574,13 @@ let zoomRaf = 0, zoomPrev = 0, zooming = false;
 let dragState = null;
 
 function viewClamp() {
-  const W = cvM.width, H = cvM.height, s = view.scale;
+  const W = MAP_WIDTH, H = MAP_HEIGHT, s = view.scale;
   view.px = cl(view.px, W - W * s, 0);
   view.py = cl(view.py, H - H * s, 0);
 }
 /* 목표값도 같은 경계로 묶는다 — 애니메이션 중 가장자리로 튀지 않게 */
 function goalClamp() {
-  const W = cvM.width, H = cvM.height, s = viewGoal.scale;
+  const W = MAP_WIDTH, H = MAP_HEIGHT, s = viewGoal.scale;
   viewGoal.px = cl(viewGoal.px, W - W * s, 0);
   viewGoal.py = cl(viewGoal.py, H - H * s, 0);
 }
@@ -1589,8 +1601,8 @@ function setZoom(next, cx, cy) {
   if (!cvM) return;
   const s0 = viewGoal.scale || view.scale;
   const s1 = cl(next, VIEW_MIN, VIEW_MAX);
-  const ax = cx == null ? cvM.width / 2 : cx;
-  const ay = cy == null ? cvM.height / 2 : cy;
+  const ax = cx == null ? MAP_WIDTH / 2 : cx;
+  const ay = cy == null ? MAP_HEIGHT / 2 : cy;
   const k = s1 / s0;
   const gx = ax - (ax - viewGoal.px) * k;
   const gy = ay - (ay - viewGoal.py) * k;
@@ -1767,7 +1779,7 @@ function cityLabelLayout(x, names, labelScale = 1) {
     let best=candidates[0],bestOverlap=Infinity,bestCollision=Infinity;
     candidates.forEach(([dx,dy])=>{
       const r={x:c.x+dx-s(6),y:c.y+dy-s(14),w:width+s(12),h:s(20)};
-      const outside=Math.max(0,-r.x)+Math.max(0,r.x+r.w-cvM.width)+Math.max(0,-r.y)+Math.max(0,r.y+r.h-cvM.height);
+      const outside=Math.max(0,-r.x)+Math.max(0,r.x+r.w-MAP_WIDTH)+Math.max(0,-r.y)+Math.max(0,r.y+r.h-MAP_HEIGHT);
       const collision=outside*s(100)+taken.reduce((sum,o)=>o.name===n?sum:sum+Math.max(0,Math.min(r.x+r.w,o.x+o.w)-Math.max(r.x,o.x))*Math.max(0,Math.min(r.y+r.h,o.y+o.h)-Math.max(r.y,o.y)),0);
       const overlap=collision+Math.hypot(dx+width/2,dy-s(4))*.01;
       if(overlap<bestOverlap){bestOverlap=overlap;bestCollision=collision;best=[dx,dy];}
@@ -1782,7 +1794,7 @@ function cityLabelLayout(x, names, labelScale = 1) {
 
 /* 표식과 글자를 화면 좌표에서 고정 폰트로 그린다. 확대 중 글꼴 힌팅·배치가 바뀌지 않는다. */
 function drawCities(x, sc) {
-  const W = cvM.width, H = cvM.height;
+  const W = MAP_WIDTH, H = MAP_HEIGHT;
   const SERIF = '"Batang","바탕",Georgia,serif';
   const SANS = '"Malgun Gothic","맑은 고딕",sans-serif';
   const s = v => v;
@@ -1791,7 +1803,7 @@ function drawCities(x, sc) {
   const labelScale = mobile && rect.width > 0 ? Math.max(1, 13 / 14 * W / rect.width) : 1;
   const ls = v => v * labelScale;
   const names = Object.keys(G.cities);
-  x.save();x.setTransform(1,0,0,1,0,0);
+  x.save();x.setTransform(cvM.width/W,0,0,cvM.height/H,0,0);
   const labels=cityLabelLayout(x,names,labelScale);
   const dp = destPick();                               // 지도에서 고르는 목적지 후보 (이동: 금색 / 출진: 붉은 점선)
   const destCands = dp ? dp.cands : [];
@@ -2058,7 +2070,7 @@ function playAttackIntro(ctx, next, intercept = false) {
   dragState = null; hover = null;
   // 확대 지도의 화면 밖에서 시작되는 공격도 출발지와 목적지를 함께 보여 준다.
   const points = [from, to].map(c => screenFromWorld(c.x, c.y));
-  if (points.some(p => p.x < 60 || p.y < 60 || p.x > cvM.width - 60 || p.y > cvM.height - 60)) {
+  if (points.some(p => p.x < 60 || p.y < 60 || p.x > MAP_WIDTH - 60 || p.y > MAP_HEIGHT - 60)) {
     view.scale = 1; view.px = 0; view.py = 0; syncGoal();
   }
   const fid=ctx.atk;
@@ -2152,9 +2164,23 @@ function drawIntroArrow(x,a,b,color,progress,arrivalRing) {
   x.restore();
 }
 
+function fitMapResolution() {
+  const host=cvM.parentElement;
+  if (!host || !host.clientWidth || !host.clientHeight) return;
+  const width=Math.max(1,Math.floor(Math.min(host.clientWidth,1240,host.clientHeight*MAP_WIDTH/MAP_HEIGHT)));
+  const height=Math.max(1,Math.round(width*MAP_HEIGHT/MAP_WIDTH));
+  const ratio=Math.min(window.devicePixelRatio || 1,4096/width,4096/height);
+  cvM.style.width=width+'px';cvM.style.height=height+'px';
+  const pixelWidth=Math.max(1,Math.round(width*ratio)),pixelHeight=Math.max(1,Math.round(height*ratio));
+  if (cvM.width!==pixelWidth) cvM.width=pixelWidth;
+  if (cvM.height!==pixelHeight) cvM.height=pixelHeight;
+}
+
 function drawMap() {
   if (!ctxM || !G) return;
-  const x = ctxM, W = cvM.width, H = cvM.height;
+  fitMapResolution();
+  const x = ctxM, W = MAP_WIDTH, H = MAP_HEIGHT;
+  const sx=cvM.width/W,sy=cvM.height/H;
   const SERIF = '"Batang","바탕",Georgia,serif';
   const SANS = '"Malgun Gothic","맑은 고딕",sans-serif';
   const sc = view.scale;
@@ -2166,32 +2192,34 @@ function drawMap() {
   if (ownership !== terrainOwnership) {
     terrainOwnership = ownership;
     terrainCache.clear();
-    terrainLayer = null;
+    terrainLayer = null; terrainBaseLayer = null;
   }
 
-  /* 지형 캐시 : 배율 0.25 단계로 다시 그려 확대해도 선명도를 유지한다.
-     확대 애니메이션 중에는 이미 만든 레이어를 늘려 써서 프레임 끊김을 막고,
-     움직임이 멈춘 프레임에서 해당 배율의 레이어를 새로 만든다. */
-  const tq = Math.min(VIEW_MAX, Math.max(VIEW_MIN, Math.ceil(sc * 4) / 4));
-  const tkey = W + 'x' + H + '@' + tq, tsize = W + 'x' + H;
-  let layer = terrainCache.get(tkey);
+  /* 확대·드래그가 끝나면 현재 영역을 화면 해상도로 다시 그린다.
+     이동 중 새로 드러난 영역은 전체 지도 캐시로 채워 빈 틈을 막는다. */
+  const tsize=cvM.width+'x'+cvM.height;
+  const baseView={scale:1,px:0,py:0},baseKey=tsize+'@1:0:0';
+  if (!terrainBaseLayer || terrainBaseLayer.__size!==tsize) terrainBaseLayer=terrainFor(baseKey,baseView,tsize);
+  const tkey=tsize+'@'+sc+':'+view.px+':'+view.py;
+  let layer = tkey===baseKey?terrainBaseLayer:terrainCache.get(tkey);
   if (!layer) {
     if ((zooming || dragState) && terrainLayer && terrainLayer.__size === tsize) layer = terrainLayer;
-    else layer = terrainFor(tkey, tq, tsize);
+    else layer = terrainFor(tkey, view, tsize);
   }
   terrainLayer = layer;
 
   x.setTransform(1, 0, 0, 1, 0, 0);
-  x.clearRect(0, 0, W, H);
+  x.clearRect(0, 0, cvM.width, cvM.height);
+  paintViewportRaster(x,terrainBaseLayer,view,W,H,cvM.width,cvM.height);
+  if (terrainLayer!==terrainBaseLayer) paintViewportRaster(x,terrainLayer,view,W,H,cvM.width,cvM.height);
 
   /* ── 지도 본체 (월드 좌표) ── */
-  x.setTransform(sc, 0, 0, sc, view.px, view.py);
-  x.drawImage(terrainLayer, 0, 0, W, H);
+  x.setTransform(sx*sc, 0, 0, sy*sc, sx*view.px, sy*view.py);
   drawLinks(x, sc);
   drawCities(x, sc);
 
   /* ── 화면 좌표 UI ── */
-  x.setTransform(1, 0, 0, 1, 0, 0);
+  x.setTransform(sx, 0, 0, sy, 0, 0);
   /* 비네트 — 가장자리를 눌러 지도가 화면에 앉은 느낌을 준다 */
   const vg = x.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.34, W / 2, H / 2, Math.max(W, H) * 0.78);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
@@ -2235,9 +2263,9 @@ function drawCityTip(x, c) {
   w = Math.max(w, mw(c.name) + 90);
   const h = 44 + rows.length * 19;
   let tx = c.x + 30;
-  if (tx + w > cvM.width - 12) tx = c.x - w - 30;
-  tx = cl(tx, 10, cvM.width - w - 10);
-  const ty = cl(c.y - h / 2, 10, cvM.height - h - 10);
+  if (tx + w > MAP_WIDTH - 12) tx = c.x - w - 30;
+  tx = cl(tx, 10, MAP_WIDTH - w - 10);
+  const ty = cl(c.y - h / 2, 10, MAP_HEIGHT - h - 10);
   x.shadowColor = '#000d'; x.shadowBlur = 20; x.shadowOffsetY = 7;
   pRound(x, tx, ty, w, h, 10);
   x.fillStyle = 'rgba(11,17,13,.97)'; x.fill();

@@ -255,7 +255,7 @@ const Battle = (function () {
     navigation = bindCanvasNavigation(cv, {
       size: () => ({ width: COLS * TILE, height: ROWS * TILE, maxScale: 4 }),
       read: () => camera, write: setCamera,
-      begin: hideUnitTooltip
+      begin: hideUnitTooltip, end: () => draw()
     });
     cv.addEventListener('click', onClick);
     cv.addEventListener('pointermove', e => { if (!navigation.active && e.pointerType !== 'touch') inspectTerrain(e); });
@@ -348,7 +348,7 @@ const Battle = (function () {
     const paddingW = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
     const availW = Math.max(120, host.clientWidth - paddingW - 2);
     const availH = Math.max(1, host.clientHeight - paddingH - 2);
-    const pixelRatio = Math.min((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 2);
+    const pixelRatio = Math.min((typeof window !== 'undefined' && window.devicePixelRatio) || 1,4096/availW,4096/availH);
     const signature = availW + ':' + availH + ':' + pixelRatio;
     // 부모 작업 영역만 측정한다. 동일한 크기의 알림으로 캔버스를 다시 줄이지 않는다.
     if (signature === fittedViewport) return;
@@ -2151,14 +2151,27 @@ const Battle = (function () {
   /* 연속된 지면 — 타일마다 명암을 초기화하지 않고 지형과 경작지로 표면을 나눈다. */
   function drawBackdrop(W,H) {
     const key=TILE+':'+cv.width+':'+cv.height;
-    if(!B.backdrop || B.backdropKey!==key) {
+    const rasterize=target=>{
       const canvas=document.createElement('canvas'), current=ctx;
       canvas.width=cv.width;canvas.height=cv.height;
-      ctx=canvas.getContext('2d');ctx.setTransform(canvas.width/W,0,0,canvas.height/H,0,0);
-      drawGround(W,H);drawScenery();drawWater(W,H);drawProps();drawRiverNames();drawGrid(W,H);
-      ctx=current;B.backdrop=canvas;B.backdropKey=key;
+      canvas.__view={...target};
+      const sx=canvas.width/W,sy=canvas.height/H;
+      ctx=canvas.getContext('2d');
+      ctx.setTransform(sx*target.scale,0,0,sy*target.scale,sx*target.px,sy*target.py);
+      try { drawGround(W,H);drawScenery();drawWater(W,H);drawProps();drawRiverNames();drawGrid(W,H); }
+      finally { ctx=current; }
+      return canvas;
+    };
+    if (!B.backdropBase || B.backdropKey!==key) {
+      B.backdropBase=rasterize({scale:1,px:0,py:0});
+      B.backdrop=B.backdropBase; B.backdropKey=key;
     }
-    ctx.drawImage(B.backdrop,0,0,W,H);
+    const old=B.backdrop.__view;
+    if (!(navigation && navigation.active) && (old.scale!==camera.scale || old.px!==camera.px || old.py!==camera.py)) {
+      B.backdrop=camera.scale===1?B.backdropBase:rasterize(camera);
+    }
+    paintViewportRaster(ctx,B.backdropBase,camera,W,H,cv.width,cv.height);
+    if (B.backdrop!==B.backdropBase) paintViewportRaster(ctx,B.backdrop,camera,W,H,cv.width,cv.height);
   }
   function geoPath(pts) {
     ctx.beginPath();
