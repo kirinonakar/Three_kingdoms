@@ -10,7 +10,7 @@ const sandbox={console,Math:math,document:{getElementById:el,querySelectorAll:()
   setTimeout:fn=>(fn(),0),clearTimeout:noop,confirm:()=>true,
   Battle:{start:o=>starts.push(o),active:true,reinforce:()=>true,reinforceDays:3}};
 sandbox.window=sandbox;vm.createContext(sandbox);
-vm.runInContext(['data.js','combat-rules.js','strategy-systems.js','save-transfer.js','game.js'].map(f=>fs.readFileSync(path.join(__dirname,'..','js',f),'utf8')).join('\n')+'\nthis.rules=CombatRules;this.scenarios=SCENARIOS;',sandbox);
+vm.runInContext(['data.js','combat-rules.js','strategy-systems.js','save-transfer.js','game.js'].map(f=>fs.readFileSync(path.join(__dirname,'..','js',f),'utf8')).join('\n')+'\nthis.rules=CombatRules;this.scenarios=SCENARIOS;this.officerDefs=OFFICER_DEFS;',sandbox);
 const {Game,rules}=sandbox,d=Game._debug;
 const fresh=()=>{starts.length=0;Game.startNew('cao','194');return Game.state;};
 const unit=(name,troops)=>({officer:Game.state.officers.find(o=>o.name===name),troops,branch:'보병',form:'어린',training:80,morale:80});
@@ -94,7 +94,7 @@ console.log('[OK] shared strength model retains branch counters, fort defenses a
 
 for(const s of sandbox.scenarios) {
   Game.startNew(s.id==='virtual'?'xiangyu':'cao',s.id);
-  const parsed=d.parseSaveFile(JSON.stringify(Game.state));assert.equal(parsed.scenario,s.id);assert.equal(parsed.officers.length,217);
+  const parsed=d.parseSaveFile(JSON.stringify(Game.state));assert.equal(parsed.scenario,s.id);assert.equal(parsed.officers.length,sandbox.officerDefs.length);
 }
 g=fresh();const original=Game.state;
 assert(!Game.previewImport('{"cities":{}}'));assert.equal(Game.state,original);

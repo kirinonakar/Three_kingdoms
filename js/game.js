@@ -21,8 +21,27 @@ const commas = n => Math.round(n).toLocaleString('ko-KR');
    assets/portraits/ 에 얼굴 그림이 있는 무장은 마우스를 올리면
    큰 초상화 툴팁(#pfTip)이 커서를 따라 나타난다. */
 const PORTRAITS = {
+  // 세력 수장
   '조조': 'assets/portraits/caocao.jpg',
-  '여포': 'assets/portraits/lvbu.jpg'
+  '여포': 'assets/portraits/lvbu.jpg',
+  '원소': 'assets/portraits/yuan.jpg',
+  '유비': 'assets/portraits/liubei.jpg',
+  '손책': 'assets/portraits/sunce.jpg',
+  '유표': 'assets/portraits/liubiao.jpg',
+  '원술': 'assets/portraits/yuanshu.jpg',
+  '유장': 'assets/portraits/liuzhang.jpg',
+  '장로': 'assets/portraits/zhanglu.jpg',
+  '마등': 'assets/portraits/mateng.jpg',
+  '이각': 'assets/portraits/lijue.jpg',
+  '장수': 'assets/portraits/jangsu.jpg',
+  '공손찬': 'assets/portraits/gongsun.jpg',
+  // 여성 무장
+  '초선': 'assets/portraits/diaochan.jpg',
+  '손상향': 'assets/portraits/sunshangxiang.jpg',
+  '대교': 'assets/portraits/daqiao.jpg',
+  '소교': 'assets/portraits/xiaoqiao.jpg',
+  '견희': 'assets/portraits/zhenji.jpg',
+  '황월영': 'assets/portraits/huangyueying.jpg'
 };
 function portraitHtml(name, size) {
   const sz = 'pf s' + (size || 22);
