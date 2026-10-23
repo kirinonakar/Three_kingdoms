@@ -21,8 +21,8 @@ const commas = n => Math.round(n).toLocaleString('ko-KR');
    assets/portraits/ 에 얼굴 그림이 있는 무장은 마우스를 올리면
    큰 초상화 툴팁(#pfTip)이 커서를 따라 나타난다. */
 const PORTRAITS = {
-  '조조': 'assets/portraits/caocao.png',
-  '여포': 'assets/portraits/lvbu.png'
+  '조조': 'assets/portraits/caocao.jpg',
+  '여포': 'assets/portraits/lvbu.jpg'
 };
 function portraitHtml(name, size) {
   const sz = 'pf s' + (size || 22);
@@ -36,6 +36,14 @@ function portraitHtml(name, size) {
 function portraitFace(name) {
   const src = PORTRAITS[name];
   return src ? '<span class="ut-face"><img src="' + src + '" alt="' + name + '"></span>' : '';
+}
+/* 이름에 얼굴 그림이 있으면 지정 크기로 그려 준다 — 타이틀 세력 카드처럼 크게 보여 줄 때 (없으면 빈 문자열) */
+function portraitPhoto(name, px) {
+  const src = PORTRAITS[name];
+  if (!src) return '';
+  const d = Math.round(px || 46);
+  return '<span class="pf-photo" style="width:' + d + 'px;height:' + d + 'px">' +
+    '<img src="' + src + '" alt="' + name + '"></span>';
 }
 /* 배지뿐 아니라 무장 태그·표의 행 전체를 호버 대상으로 만드는 속성.
    초상화가 없는 무장은 빈 문자열이라 아무 일도 일어나지 않는다. */
@@ -567,7 +575,10 @@ function startScreen() {
     const offs = roster.filter(o => o.def[1] === id).length;
     const d = (scenario.difficulty && scenario.difficulty[id]) || DIFFICULTY[id] || 1;
     const stars = '★'.repeat(d) + '☆'.repeat(5 - d);
-    return '<div class="frow" role="button" tabindex="0" aria-label="' + name + ' 세력으로 시작" data-faction="' + id + '" onclick="Game.startNew(\'' + id + '\',\'' + scenario.id + '\')">' +
+    /* 세력 카드에는 세력 색 점만 두고, 수장 얼굴은 카드에 마우스를 올렸을 때 툴팁으로 띄운다.
+       시나리오에서 수장이 바뀌면(예: 손책→손권) 그쪽을 우선한다. */
+    const chief = (scenario.leaders && scenario.leaders[id]) || LEADERS[id] || name;
+    return '<div class="frow"' + portraitAttr(chief) + ' role="button" tabindex="0" aria-label="' + name + ' 세력으로 시작" data-faction="' + id + '" onclick="Game.startNew(\'' + id + '\',\'' + scenario.id + '\')">' +
       '<span class="dot" style="background:' + f[2] + '"></span>' +
       '<b style="width:64px">' + name + '</b>' +
       '<span class="muted">도시 ' + cs.length + ' · 병력 ' + commas(troops) + ' · 무장 ' + offs + ' · 수도 ' + cs[0][0] + '</span>' +
