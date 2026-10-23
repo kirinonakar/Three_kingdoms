@@ -164,3 +164,39 @@ assert.equal(JSON.stringify(g),frozen); assert.equal(completed,0,'battle continu
 Game.toggleAutoPlay(); until(()=>completed===1,'resume paused intro battle');
 Game.toggleAutoPlay(); drain(); assert.equal(completed,1,'resume must resolve the committed battle exactly once');
 console.log('[OK] animated attack pause: toolbar stays interactive, overlay clears immediately, battle resumes once');
+
+// A field choice after the invasion preview needs both armies meeting in the middle.
+g=fresh();timers.clear();
+const beforeField=battleStarts;
+const fieldCtx={atk:'cao',def:'lijue',from:'허창',to:'낙양',introShown:true,siege:false};
+const fieldUnit=(name,troops)=>({officer:g.officers.find(o=>o.name===name),troops,branch:'보병',form:'어린',training:80,morale:80});
+const arrowStyles={};el('attackIntro').style.setProperty=(key,value)=>{arrowStyles[key]=value;};
+d.beginBattle(fieldCtx,[fieldUnit('하후돈',4000)],[fieldUnit('이각',4000)],'atk',false);
+assert.equal(g.ui.attackIntro.kind,'intercept');assert.equal(g.ui.attackIntro.from,'허창');assert.equal(g.ui.attackIntro.to,'낙양');
+assert.equal(g.ui.attackIntro.faction,'cao');assert.equal(arrowStyles['--attack-color'],g.factions.cao.color);
+assert.match(el('attackIntro').textContent,/야전 요격.*허창.*→ ⚔ ←.*낙양/);
+assert.equal(battleStarts,beforeField,'field battle must wait for the intercept animation');
+tick();tick();
+assert(vm.runInContext('attackIntro.progress>0&&attackIntro.progress<1',sandbox),'intercept arrow must animate over time');
+const arrowMoves=[],arrowTips=[],arrowColors=[];
+sandbox.arrowDrawing=new Proxy({moveTo:(x,y)=>arrowMoves.push({x,y}),translate:(x,y)=>arrowTips.push({x,y}),
+  stroke:()=>arrowColors.push(sandbox.arrowDrawing.strokeStyle)},{get:(t,k)=>t[k]||noop,set:(t,k,v)=>(t[k]=v,true)});
+vm.runInContext('drawAttackIntro(arrowDrawing)',sandbox);
+const attacking=vm.runInContext("screenFromWorld(G.cities['허창'].x,G.cities['허창'].y)",sandbox);
+const defending=vm.runInContext("screenFromWorld(G.cities['낙양'].x,G.cities['낙양'].y)",sandbox);
+assert(arrowMoves.some(p=>p.x===attacking.x&&p.y===attacking.y),'attack arrow starts at the attacking city');
+assert(arrowMoves.some(p=>p.x===defending.x&&p.y===defending.y),'defense arrow starts at the defending city');
+assert(arrowColors.includes(g.factions.cao.color)&&arrowColors.includes(g.factions.lijue.color),'both faction colors must be drawn');
+assert.equal(arrowTips.length,2,'both arrowheads advance in the same animation frame');
+arrowTips.length=0;
+vm.runInContext('attackIntro.progress=1;attackIntro.elapsed=820;drawAttackIntro(arrowDrawing)',sandbox);
+assert.equal(arrowTips.length,2);
+for(const tip of arrowTips) {
+  assert.equal(tip.x,(attacking.x+defending.x)/2,'arrows collide at the midpoint horizontally');
+  assert.equal(tip.y,(attacking.y+defending.y)/2,'arrows collide at the midpoint vertically');
+}
+assert(arrowColors.includes('#ffe3a0'),'collision must draw the flash');
+until(()=>battleStarts===beforeField+1,'intercept animation completes');
+assert.equal(el('attackIntro').hidden,true);assert(!g.ui.attackIntro);assert(fieldCtx.interceptShown);
+assert.equal(fieldCtx.defReserve,1000,'animation reentry must not withhold reserves twice');
+console.log('[OK] field interception: both faction arrows animate from their cities, meet at the same midpoint with a flash, and start the battle once');

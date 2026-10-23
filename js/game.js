@@ -15,6 +15,59 @@ const ri = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
 const cl = (v, a, b) => Math.max(a, Math.min(b, v));
 const commas = n => Math.round(n).toLocaleString('ko-KR');
 
+/* 지도와 전장이 공유하는 포인터 탐색. 제스처 뒤의 합성 클릭은 명령으로 넘기지 않는다. */
+function bindCanvasNavigation(canvas, { size, read, write, tap, enabled = () => true, begin = () => {}, end = () => {} }) {
+  const pointers = new Map();
+  let base = null, blocked = false;
+  const point = e => {
+    const r = canvas.getBoundingClientRect(), s = size();
+    return { x: (e.clientX - r.left) * s.width / r.width, y: (e.clientY - r.top) * s.height / r.height,
+      clientX: e.clientX, clientY: e.clientY };
+  };
+  const snapshot = () => {
+    const ps = Array.from(pointers.values()).slice(0, 2);
+    if (!ps.length) { base = null; return; }
+    const a = ps[0], b = ps[1] || a;
+    base = { ...read(), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2,
+      distance: Math.hypot(b.x - a.x, b.y - a.y), clientX: a.clientX, clientY: a.clientY };
+  };
+  canvas.addEventListener('pointerdown', e => {
+    if (!enabled() || e.button !== 0) return;
+    if (!pointers.size) { blocked = false; begin(); }
+    pointers.set(e.pointerId, point(e));
+    if (pointers.size > 1) blocked = true;
+    snapshot();
+    try { canvas.setPointerCapture?.(e.pointerId); } catch (_) { /* 이미 종료된 포인터 */ }
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!pointers.has(e.pointerId) || !base || !enabled()) return;
+    pointers.set(e.pointerId, point(e));
+    const ps = Array.from(pointers.values()).slice(0, 2), a = ps[0], b = ps[1] || a;
+    if (ps.length > 1 || Math.hypot(a.clientX - base.clientX, a.clientY - base.clientY) > 6) blocked = true;
+    if (!blocked) return;
+    const scale = cl(base.scale * (ps.length > 1 && base.distance > 0 ? Math.hypot(b.x - a.x, b.y - a.y) / base.distance : 1), 1, size().maxScale || 3);
+    const ratio = scale / base.scale;
+    write({ scale, px: (a.x + b.x) / 2 - (base.x - base.px) * ratio,
+      py: (a.y + b.y) / 2 - (base.y - base.py) * ratio });
+  });
+  const finish = (e, cancelled) => {
+    if (!pointers.has(e.pointerId)) return;
+    const p = point(e), wasTap = !cancelled && !blocked && pointers.size === 1 && enabled();
+    pointers.delete(e.pointerId);
+    if (cancelled) blocked = true;
+    if (pointers.size) { blocked = true; snapshot(); }
+    else { base = null; end(); }
+    if (wasTap && tap) tap(p, e);
+  };
+  canvas.addEventListener('pointerup', e => finish(e, false));
+  canvas.addEventListener('pointercancel', e => finish(e, true));
+  canvas.addEventListener('lostpointercapture', e => finish(e, true));
+  canvas.addEventListener('click', e => {
+    if (blocked) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
+  return { get active() { return pointers.size > 0; } };
+}
+
 
 /* ── 무장 초상화 ───────────────────────────────────
    배지에는 성(姓) 첫 글자를 기본으로 보여 준다.
@@ -322,15 +375,17 @@ function hidePortraitTip() {
   const tip = $('pfTip'); if (tip) tip.hidden = true;
 }
 function bindPortraitTip() {
-  document.addEventListener('mouseover', e => {
+  document.addEventListener('pointerover', e => {
+    if (e.pointerType === 'touch') { hidePortraitTip(); return; }
     const el = portraitHost(e.target);
     if (el) showPortraitTip(el, e.clientX, e.clientY);
   });
-  document.addEventListener('mousemove', e => {
+  document.addEventListener('pointermove', e => {
+    if (e.pointerType === 'touch') return;
     const tip = $('pfTip'); if (!tip || tip.hidden) return;
     if (portraitHost(e.target)) movePortraitTip(e.clientX, e.clientY); else hidePortraitTip();
   });
-  document.addEventListener('mouseout', e => {
+  document.addEventListener('pointerout', e => {
     const host = portraitHost(e.target); if (!host) return;
     const to = portraitHost(e.relatedTarget);
     // 같은 초상화(행 → 배지, 배지 → 행)로 움직인 것이면 툴팁을 유지한다
@@ -673,42 +728,28 @@ function boot() {
   bindSfx();                                          // 버튼·목록 클릭 효과음
   bindPortraitTip();                                  // 무장 초상화 호버 툴팁
   migrateLegacySave();                                // 구버전 단일 저장을 슬롯으로 옮긴다
-  cvM.addEventListener('pointerdown', e => {
-    if (attackIntro) return;
-    if (e.button !== 0) return;
-    const p = toCanvas(e);
-    stopZoomAnim();                              // 확대 중이면 현재 배율에 고정한 뒤 끌기를 시작한다
-    dragState = { sx: p.x, sy: p.y, px: view.px, py: view.py, moved: 0 };
-    if (cvM.setPointerCapture) { try { cvM.setPointerCapture(e.pointerId); } catch (err) { /* 무시 */ } }
-    cvM.style.cursor = 'grabbing';
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => { if (G) drawMap(); }).observe(cvM);
+  }
+  const navigation = bindCanvasNavigation(cvM, {
+    size: () => ({ width: cvM.width, height: cvM.height, maxScale: VIEW_MAX }),
+    read: () => view,
+    write: next => { Object.assign(view, next); viewClamp(); syncGoal(); drawMap(); },
+    enabled: () => !attackIntro && !!G && !G.battleActive,
+    begin: () => { stopZoomAnim(); dragState = true; hover = null; cvM.style.cursor = 'grabbing'; },
+    end: () => { dragState = null; cvM.style.cursor = 'grab'; drawMap(); },
+    tap: p => selectMapPoint(p)
   });
   cvM.addEventListener('pointermove', e => {
-    if (attackIntro) return;
+    if (attackIntro || navigation.active || e.pointerType === 'touch') return;
     const p = toCanvas(e);
-    if (dragState) {
-      const dx = p.x - dragState.sx, dy = p.y - dragState.sy;
-      dragState.moved = Math.max(dragState.moved, Math.hypot(dx, dy));
-      if (view.scale > 1) {
-        view.px = dragState.px + dx;
-        view.py = dragState.py + dy;
-        viewClamp();
-        syncGoal();                              // 끌어 옮긴 위치를 목표값에도 반영
-        drawMap();
-      }
-      return;
-    }
     if (!G) return;
     const w = worldFromScreen(p.x, p.y), h = cityAt(w.x, w.y);
     if (h !== hover) { hover = h; drawMap(); }
     cvM.style.cursor = h ? 'pointer' : 'grab';
   });
-  const endDrag = e => {
-    if (!dragState) return;
-    const moved = dragState.moved;
-    dragState = null;
-    cvM.style.cursor = 'grab';
-    if (moved > 6 || !G) return;      // 드래그는 선택으로 처리하지 않는다
-    const p = toCanvas(e);
+  const selectMapPoint = p => {
+    if (!G) return;
     const w = worldFromScreen(p.x, p.y);
     const c = cityAt(w.x, w.y);
     if (c) {
@@ -727,10 +768,7 @@ function boot() {
     }
     else { G.sel = null; renderCityPanel(); drawMap(); }
   };
-  cvM.addEventListener('pointerup', endDrag);
-  cvM.addEventListener('pointercancel', () => { dragState = null; cvM.style.cursor = 'grab'; });
   cvM.addEventListener('pointerleave', () => {
-    dragState = null;
     if (hover) { hover = null; drawMap(); }
   });
   cvM.addEventListener('wheel', e => {
@@ -786,6 +824,14 @@ function toCanvas(e) {
 function cityAt(x, y) {
   const rect=cvM?.getBoundingClientRect();
   const cssScale=rect?.width?cvM.width/rect.width:1;
+  const screen=screenFromWorld(x,y);
+  // 확대된 이름표도 도시 표식과 똑같이 눌러 선택할 수 있다.
+  if (cityLabelCache) {
+    for (const [name,label] of Object.entries(cityLabelCache.labels)) {
+      const box=label.box;
+      if (label.visible !== false && box && screen.x>=box.x && screen.x<=box.x+box.w && screen.y>=box.y && screen.y<=box.y+box.h) return name;
+    }
+  }
   const rr = 24*cssScale / (view.scale || 1);
   let best=null,dist=rr*rr;
   for (const n of Object.keys(G ? G.cities : {})) {
@@ -796,6 +842,17 @@ function cityAt(x, y) {
 }
 function setTitleMode(on) {
   if (document.body && document.body.classList) document.body.classList[on ? 'add' : 'remove']('title');
+  mobilePanel('map');
+}
+function mobilePanel(panel) {
+  if (!['map', 'city', 'log'].includes(panel)) return;
+  const app = $('app');
+  if (app && app.dataset) app.dataset.mobilePanel = panel;
+  ['map', 'city', 'log'].forEach(name => {
+    const button = $('mobileTab-' + name);
+    if (button && button.setAttribute) button.setAttribute('aria-pressed', String(name === panel));
+  });
+  if (panel === 'map' && app && app.isConnected && cvM && G) drawMap();
 }
 function startScreen() {
   setTitleMode(true);
@@ -1685,22 +1742,40 @@ function drawCityGlyph(x, c, size, col, sc) {
 }
 
 let cityLabelCache = null;
-function cityLabelLayout(x, names) {
-  const key=cvM.width+':'+cvM.height+':'+names.map(n=>n+':'+G.cities[n].x+':'+G.cities[n].y+':'+citySize(G.cities[n]).rank).join('|');
+function cityLabelLayout(x, names, labelScale = 1) {
+  const destinations=destPick()?.cands || [];
+  const key=cvM.width+':'+cvM.height+':'+labelScale+':'+view.scale+':'+view.px+':'+view.py+':'+G.sel+':'+hover+':'+G.pf+':'+destinations.join(',')+':'+names.map(n=>n+':'+G.cities[n].x+':'+G.cities[n].y+':'+citySize(G.cities[n]).rank+':'+G.cities[n].owner).join('|');
   if(cityLabelCache && cityLabelCache.key===key) return cityLabelCache.labels;
-  const taken=names.map(n=>{const c=G.cities[n];return {x:c.x-23,y:c.y-24,w:46,h:48};}),labels={};
-  x.font='bold 14px "Batang","바탕",Georgia,serif';
-  names.slice().sort((a,b)=>G.cities[a].y-G.cities[b].y || G.cities[a].x-G.cities[b].x).forEach(n=>{
-    const c=G.cities[n],width=x.measureText(n).width;
-    const candidates=[[-width/2,-28],[-width/2,42],[28,5],[-width-28,5],[-width/2,-43],[-width/2,58]];
-    let best=candidates[0],bestOverlap=Infinity;
+  const taken=names.map(n=>{const c=screenFromWorld(G.cities[n].x,G.cities[n].y),rank=citySize(G.cities[n]).rank,roof=rank===3?25:rank===2?18:14;return {name:n,x:c.x-23,y:c.y-roof,w:46,h:roof+10};}),labels={};
+  const s=v=>v*labelScale;
+  x.font='bold '+s(14)+'px "Batang","바탕",Georgia,serif';
+  const priority=n=>(n===G.sel?10000:0)+(n===hover?5000:0)+(destinations.includes(n)?1000:0)+(G.cities[n].owner===G.pf?100:0)+citySize(G.cities[n]).rank;
+  names.slice().sort((a,b)=>priority(b)-priority(a) || G.cities[a].y-G.cities[b].y || G.cities[a].x-G.cities[b].x).forEach(n=>{
+    const c=screenFromWorld(G.cities[n].x,G.cities[n].y),width=x.measureText(n).width;
+    const rank=citySize(G.cities[n]).rank;
+    // PC에서는 성 지붕 바로 위에 고정한다. 축소 중 충돌 회피로 이름표가 멀어지지 않는다.
+    if (labelScale <= 1.4) {
+      const dx=-width/2,dy=-(rank===3?31:rank===2?24:20);
+      labels[n]={dx,dy,width,box:{x:c.x+dx-6,y:c.y+dy-14,w:width+12,h:20}};
+      return;
+    }
+    // 이름표의 가장자리를 성에 붙인다. 밀집 지역도 외곽의 빈 공간까지 밀어내지 않는다.
+    const roof=rank===3?25:rank===2?18:14;
+    const above=-roof-2-s(5.5),below=12+s(13.5),side=24+s(5.5);
+    const candidates=[[-width/2,above],[-width/2,below],[side,s(4)],[-width-side,s(4)],
+      [-width/2-s(5),above],[-width/2+s(5),above]];
+    let best=candidates[0],bestOverlap=Infinity,bestCollision=Infinity;
     candidates.forEach(([dx,dy])=>{
-      const r={x:c.x+dx-6,y:c.y+dy-14,w:width+12,h:20};
-      const overlap=taken.reduce((sum,o)=>sum+Math.max(0,Math.min(r.x+r.w,o.x+o.w)-Math.max(r.x,o.x))*Math.max(0,Math.min(r.y+r.h,o.y+o.h)-Math.max(r.y,o.y)),0);
-      if(overlap<bestOverlap){bestOverlap=overlap;best=[dx,dy];}
+      const r={x:c.x+dx-s(6),y:c.y+dy-s(14),w:width+s(12),h:s(20)};
+      const outside=Math.max(0,-r.x)+Math.max(0,r.x+r.w-cvM.width)+Math.max(0,-r.y)+Math.max(0,r.y+r.h-cvM.height);
+      const collision=outside*s(100)+taken.reduce((sum,o)=>o.name===n?sum:sum+Math.max(0,Math.min(r.x+r.w,o.x+o.w)-Math.max(r.x,o.x))*Math.max(0,Math.min(r.y+r.h,o.y+o.h)-Math.max(r.y,o.y)),0);
+      const overlap=collision+Math.hypot(dx+width/2,dy-s(4))*.01;
+      if(overlap<bestOverlap){bestOverlap=overlap;bestCollision=collision;best=[dx,dy];}
     });
-    labels[n]={dx:Math.round(best[0]),dy:best[1],width};
-    taken.push({x:c.x+best[0]-6,y:c.y+best[1]-14,w:width+12,h:20});
+    const box={x:c.x+best[0]-s(6),y:c.y+best[1]-s(14),w:width+s(12),h:s(20)};
+    const visible=bestCollision<.1 || n===G.sel || n===hover;
+    labels[n]={dx:best[0],dy:best[1],width,box,visible};
+    if (visible) taken.push(box);
   });
   cityLabelCache={key,labels};return labels;
 }
@@ -1711,9 +1786,13 @@ function drawCities(x, sc) {
   const SERIF = '"Batang","바탕",Georgia,serif';
   const SANS = '"Malgun Gothic","맑은 고딕",sans-serif';
   const s = v => v;
+  const rect = cvM.getBoundingClientRect();
+  const mobile = typeof window !== 'undefined' && window.innerWidth > 0 && window.innerWidth <= 940;
+  const labelScale = mobile && rect.width > 0 ? Math.max(1, 13 / 14 * W / rect.width) : 1;
+  const ls = v => v * labelScale;
   const names = Object.keys(G.cities);
   x.save();x.setTransform(1,0,0,1,0,0);
-  const labels=cityLabelLayout(x,names);
+  const labels=cityLabelLayout(x,names,labelScale);
   const dp = destPick();                               // 지도에서 고르는 목적지 후보 (이동: 금색 / 출진: 붉은 점선)
   const destCands = dp ? dp.cands : [];
   const destAtk = !!(dp && dp.kind === 'attack');
@@ -1721,7 +1800,7 @@ function drawCities(x, sc) {
     const p = screenFromWorld(c.x, c.y);
     return p.x > -90 && p.x < W + 90 && p.y > -70 && p.y < H + 70;
   };
-  names.forEach(n => {
+  names.slice().sort((a,b)=>Number(a===G.sel)-Number(b===G.sel)).forEach(n => {
     const city=G.cities[n];
     if (!onScreen(city)) return;
     const p=screenFromWorld(city.x,city.y),c=Object.assign({},city,{x:Math.round(p.x),y:Math.round(p.y)});
@@ -1767,21 +1846,23 @@ function drawCities(x, sc) {
     /* 이름표 — 어두운 판 위에 얹어 어떤 지형에서도 읽히게 */
     const anchor=labels[n],L={x:c.x+anchor.dx,y:c.y+anchor.dy};
     x.textAlign = 'left';
-    x.font = 'bold ' + s(14) + 'px ' + SERIF;
-    const nw = anchor.width;
-    x.save();
-    pRound(x, L.x - s(5.5), L.y - s(13.5), nw + s(11), s(19), s(4.5));
-    const pg = x.createLinearGradient(0, L.y - s(13.5), 0, L.y + s(5.5));
-    pg.addColorStop(0, isSel ? 'rgba(60,46,20,.92)' : 'rgba(10,16,12,.86)');
-    pg.addColorStop(1, isSel ? 'rgba(32,24,11,.86)' : 'rgba(6,10,8,.72)');
-    x.fillStyle = pg; x.fill();
-    x.strokeStyle = isSel ? 'rgba(255,216,140,.7)' : hexA(col, .4);
-    x.lineWidth = s(1); x.stroke();
-    x.restore();
-    x.lineWidth = s(3.5); x.strokeStyle = 'rgba(6,11,8,.92)';
-    x.strokeText(n, L.x, L.y);
-    x.fillStyle = isSel ? '#ffe6a8' : '#f8f2e2';
-    x.fillText(n, L.x, L.y);
+    if (anchor.visible !== false) {
+      x.font = 'bold ' + ls(14) + 'px ' + SERIF;
+      const nw = anchor.width;
+      x.save();
+      pRound(x, L.x - ls(5.5), L.y - ls(13.5), nw + ls(11), ls(19), ls(4.5));
+      const pg = x.createLinearGradient(0, L.y - ls(13.5), 0, L.y + ls(5.5));
+      pg.addColorStop(0, isSel ? 'rgba(60,46,20,.92)' : 'rgba(10,16,12,.86)');
+      pg.addColorStop(1, isSel ? 'rgba(32,24,11,.86)' : 'rgba(6,10,8,.72)');
+      x.fillStyle = pg; x.fill();
+      x.strokeStyle = isSel ? 'rgba(255,216,140,.7)' : hexA(col, .4);
+      x.lineWidth = s(1); x.stroke();
+      x.restore();
+      x.lineWidth = ls(3.5); x.strokeStyle = 'rgba(6,11,8,.92)';
+      x.strokeText(n, L.x, L.y);
+      x.fillStyle = isSel ? '#ffe6a8' : '#f8f2e2';
+      x.fillText(n, L.x, L.y);
+    }
     if (isCapital(c)) {
       x.font = s(11.5) + 'px ' + SANS;
       x.lineWidth = s(3); x.strokeStyle = 'rgba(6,11,8,.9)';
@@ -1961,14 +2042,16 @@ function stopAttackIntro() {
   if (attackIntro.game.ui) delete attackIntro.game.ui.attackIntro;
   attackIntro = null;
 }
-function playAttackIntro(ctx, next) {
-  if (ctx.introShown) { next(); return; }
+function playAttackIntro(ctx, next, intercept = false) {
+  if (intercept ? ctx.interceptShown : ctx.introShown) { next(); return; }
   ctx.introShown = true;
+  if(intercept) ctx.interceptShown=true;
   // DOM 없는 시뮬레이션은 대기 없이 기존 전투 계산을 사용한다.
   if (!cvM || cvM.isConnected !== true || !ctxM || typeof requestAnimationFrame !== 'function') {
     next(); return;
   }
-  const from = G.cities[ctx.from], to = G.cities[ctx.to];
+  const fromName=ctx.from,toName=ctx.to;
+  const from = G.cities[fromName], to = G.cities[toName];
   if (!from || !to) { next(); return; }
   stopAttackIntro();
   stopZoomAnim();
@@ -1978,16 +2061,19 @@ function playAttackIntro(ctx, next) {
   if (points.some(p => p.x < 60 || p.y < 60 || p.x > cvM.width - 60 || p.y > cvM.height - 60)) {
     view.scale = 1; view.px = 0; view.py = 0; syncGoal();
   }
-  const faction = G.factions[ctx.atk], app = $('app'), banner = $('attackIntro');
-  const intro = attackIntro = { game: G, from, to, color: faction.color,
-    progress: 0, started: null, raf: 0, wasInert: !!(app && app.inert), next };
-  G.ui.attackIntro = { from: ctx.from, to: ctx.to, faction: ctx.atk };
+  const fid=ctx.atk;
+  const faction = G.factions[fid]||{name:'수비',color:'#888'}, app = $('app'), banner = $('attackIntro');
+  const defending=G.factions[ctx.def]||{name:'수비',color:'#888'};
+  const intro = attackIntro = { game: G, from, to, color: faction.color, intercept, defendColor:defending.color,
+    progress: 0, elapsed:0, started: null, raf: 0, wasInert: !!(app && app.inert), next };
+  G.ui.attackIntro = { from: fromName, to: toName, faction: fid, kind:intercept?'intercept':'attack' };
   const automated = G.fullDelegation || !G.pf;
   if (app) app.inert = !automated;
   if (banner) {
     banner.classList.toggle('automated', !!automated);
     banner.style.setProperty('--attack-color', faction.color);
-    banner.textContent = faction.name + '군 출진 · ' + ctx.from + ' → ' + ctx.to;
+    banner.textContent = intercept?'야전 요격 · '+faction.name+'군 ('+fromName+') → ⚔ ← '+defending.name+'군 ('+toName+')':
+      faction.name+'군 출진 · '+fromName+' → '+toName;
     banner.hidden = false;
   }
   renderTop(); renderCityPanel(); drawMap();
@@ -1995,6 +2081,7 @@ function playAttackIntro(ctx, next) {
     if (attackIntro !== intro || G !== intro.game) return;
     if (intro.started === null) intro.started = ts;
     const elapsed = ts - intro.started;
+    intro.elapsed=elapsed;
     intro.progress = cl(elapsed / 820, 0, 1);
     drawMap();
     if (elapsed >= 1120) {
@@ -2011,15 +2098,37 @@ function drawAttackIntro(x) {
   if (!attackIntro) return;
   const a = screenFromWorld(attackIntro.from.x, attackIntro.from.y);
   const b = screenFromWorld(attackIntro.to.x, attackIntro.to.y);
+  if(attackIntro.intercept) {
+    const meeting={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    drawIntroArrow(x,a,meeting,attackIntro.color,attackIntro.progress,false);
+    drawIntroArrow(x,b,meeting,attackIntro.defendColor,attackIntro.progress,false);
+    if(attackIntro.progress>=1) {
+      const p=cl((attackIntro.elapsed-820)/300,0,1),radius=12+p*20;
+      x.save();x.globalAlpha=1-p;x.strokeStyle='#ffe3a0';x.fillStyle='#fff3cb';
+      x.lineWidth=3;x.shadowColor='#ffbb51';x.shadowBlur=18;
+      x.beginPath();x.arc(meeting.x,meeting.y,radius,0,Math.PI*2);x.stroke();
+      x.beginPath();x.arc(meeting.x,meeting.y,5*(1-p)+2,0,Math.PI*2);x.fill();
+      for(let i=0;i<8;i++) {
+        const angle=i*Math.PI/4;
+        x.beginPath();x.moveTo(meeting.x+Math.cos(angle)*8,meeting.y+Math.sin(angle)*8);
+        x.lineTo(meeting.x+Math.cos(angle)*(radius+9),meeting.y+Math.sin(angle)*(radius+9));x.stroke();
+      }
+      x.restore();
+    }
+    return;
+  }
+  drawIntroArrow(x,a,b,attackIntro.color,attackIntro.progress,true);
+}
+function drawIntroArrow(x,a,b,color,progress,arrivalRing) {
   const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy) || 1;
   const bend = Math.min(45, length * .16);
   const q = { x: (a.x + b.x) / 2 - dy / length * bend,
     y: (a.y + b.y) / 2 + dx / length * bend };
-  const t = 1 - Math.pow(1 - attackIntro.progress, 2);
+  const t = 1 - Math.pow(1 - progress, 2);
   const tip = quadPt(a, q, b, t);
   const angle = Math.atan2((1-t)*(q.y-a.y)+t*(b.y-q.y), (1-t)*(q.x-a.x)+t*(b.x-q.x));
   x.save();
-  x.strokeStyle = attackIntro.color; x.fillStyle = attackIntro.color;
+  x.strokeStyle = color; x.fillStyle = color;
   x.shadowColor = '#000'; x.shadowBlur = 9;
   x.lineCap = 'round'; x.lineJoin = 'round';
   x.lineWidth = 9;
@@ -2037,7 +2146,7 @@ function drawAttackIntro(x) {
   }
   x.lineWidth = 3;
   x.beginPath(); x.arc(a.x, a.y, 12, 0, Math.PI * 2); x.stroke();
-  if (attackIntro.progress >= 1) {
+  if (arrivalRing && progress >= 1) {
     x.beginPath(); x.arc(b.x, b.y, 24, 0, Math.PI * 2); x.stroke();
   }
   x.restore();
@@ -2067,7 +2176,7 @@ function drawMap() {
   const tkey = W + 'x' + H + '@' + tq, tsize = W + 'x' + H;
   let layer = terrainCache.get(tkey);
   if (!layer) {
-    if (zooming && terrainLayer && terrainLayer.__size === tsize) layer = terrainLayer;
+    if ((zooming || dragState) && terrainLayer && terrainLayer.__size === tsize) layer = terrainLayer;
     else layer = terrainFor(tkey, tq, tsize);
   }
   terrainLayer = layer;
@@ -2392,6 +2501,7 @@ function selectCity(name) {
   const atk=G.ui && G.ui.attack;                 // 출진 목적지 선택 중 — 사이드 목록 클릭도 목적지 선택으로 쓴다
   if(name && atk && atk.picking && name!==atk.from) { chooseAttackTarget(name);return; }
   G.sel = name; renderCityPanel(); drawMap();
+  if (name) mobilePanel('city');
 }
 
 /* ── 모달 ────────────────────────────────────────────── */
@@ -2703,6 +2813,7 @@ function syncMoveHint() {
   const mv = dp.st, cands = dp.cands, atk = dp.kind === 'attack';
   const sig = dp.kind + '|' + mv.from + '|' + mv.names.join(',') + '|' + cands.join(',');
   if (sig === moveHintSig) return;             // 같은 내용이면 DOM을 다시 만들지 않는다
+  mobilePanel('map');
   moveHintSig = sig;
   el.setAttribute('aria-label', (atk ? '출진' : '이동') + ' 목적지 선택');
   el.innerHTML = '<span class="mh-t">' + (atk ? '출진 목적지' : '이동 목적지') + '</span>' +
@@ -3161,7 +3272,7 @@ function renderDefenseDeploy() {
     '<p class="muted">출진처럼 무장마다 병과·진형·병력을 지정합니다 — ' +
       Object.keys(FORMS).map(f => '<b>' + f + '</b> ' + FORMS[f].desc).join(' · ') + '</p>' +
     '<p><label>수비 방침 <select id="defMode" aria-label="수비 방침" onchange="Game.state.ui.defDeploy.mode=this.value"><option value="siege"' + (d.mode==='siege'?' selected':'') + '>농성 — 성과 방어도 활용</option><option value="field"' + (d.mode==='field'?' selected':'') + '>야전 요격 — 패하면 성으로 후퇴</option></select></label></p>' +
-    '<p class="muted">야전에서 침공군을 물리치면 도시를 지킵니다. 야전 패배·성으로 후퇴 시 남은 부대와 예비 병력으로 공성을 이어갑니다.</p>' +
+    '<p class="muted">야전에서 침공군을 물리치면 도시를 지킵니다. 야전 패배·성으로 후퇴 시 남은 부대와 예비 병력으로 공성을 이어갑니다. 예비 병력 없이 전원 요격을 편성하면 병력의 25%를 성에 남깁니다.</p>' +
     '<p><label class="muted"><input type="checkbox" id="defAuto"' + (d.auto ? ' checked' : '') + '> 자동 전투(지휘 위임)</label></p>' +
     '<p class="muted" id="defSupplyForecast" aria-live="polite">' + battleSupplyHint(total + (d.reinf||[]).reduce((s,r)=>s+r.troops,0)) + '</p>' +
     rows +
@@ -3294,6 +3405,8 @@ function autoRetreatResult(ctx, atkUnits) {
   return res;
 }
 function resolveAutoRetreat(ctx, atkUnits) {
+  const city=ctx&&G.cities[ctx.to];
+  if(!city || city.troops>0) return false;
   const res = autoRetreatResult(ctx, atkUnits);
   if (!res) return false;
   G.battleActive = false; G.battleCtx = null;
@@ -3301,9 +3414,35 @@ function resolveAutoRetreat(ctx, atkUnits) {
   return true;
 }
 
+function prepareFieldDefense(ctx, defUnits) {
+  // 야전 전멸이 성의 무혈 함락으로 이어지지 않도록 실제 주둔군 일부를 성에 남긴다.
+  // 수동 편성에서 이미 남긴 예비 병력은 그대로 쓰고, 새 병력을 생성하지 않는다.
+  if(ctx.siege===false && !ctx.fieldPrepared) {
+    ctx.fieldPrepared=true;
+    const total=defenseTroops(defUnits);
+    if(!(ctx.defReserve>0) && total>1) {
+      ctx.defReserve=Math.min(total-1,Math.max(1,Math.floor(total*.25)));
+      const fieldTotal=total-ctx.defReserve;
+      let assigned=0, cumulative=0;
+      defUnits=defUnits.map(u=>{
+        cumulative+=u.troops;
+        const next=Math.floor(cumulative*fieldTotal/total),troops=next-assigned;
+        assigned=next;return {...u,troops};
+      }).filter(u=>u.troops>0);
+      log('🏯 '+ctx.to+' 수비군 '+commas(ctx.defReserve)+'명이 성에 남아 공성을 대비합니다.','war');
+    }
+  }
+  return defUnits;
+}
+
 function beginBattle(ctx, atkUnits, defUnits, playerSide, auto, preReinf) {
+  defUnits=prepareFieldDefense(ctx,defUnits);
   // 수비측 병력이 0이면 싸울 수 없다 — 전투 없이 자동 후퇴
   if (defenseTroops(defUnits) <= 0 && resolveAutoRetreat(ctx, atkUnits)) return;
+  if(ctx.siege===false && !ctx.interceptShown) {
+    playAttackIntro(ctx,()=>beginBattle(ctx,atkUnits,defUnits,playerSide,auto,preReinf),true);
+    return;
+  }
   if (!ctx.introShown) {
     playAttackIntro(ctx, () => beginBattle(ctx, atkUnits, defUnits, playerSide, auto, preReinf));
     return;
@@ -3318,6 +3457,7 @@ function beginBattle(ctx, atkUnits, defUnits, playerSide, auto, preReinf) {
   sfx('battleStart');
   Battle.start({
     siege: ctx.siege !== false, city: G.cities[ctx.to], playerSide, auto: !!auto,
+    approach:G.cities[ctx.from]?{x:G.cities[ctx.from].x-G.cities[ctx.to].x,y:G.cities[ctx.from].y-G.cities[ctx.to].y}:null,
     atk: { name: aF.name, color: aF.color, units: atkUnits },
     def: { name: dF.name, color: dF.color, units: defUnits },
     retreatCities: playerSide === 'def' ? defenderRetreatCities(ctx) : [],
@@ -3352,7 +3492,7 @@ function finishBattle(ctx,res) {
 }
 
 // 야전에서는 도시 소유권을 바꾸지 않는다. 실제 생존 부대와 성의 예비 병력만 공성에 참가한다.
-function continueSiege(ctx,res,originalAtk,originalDef,playerSide,auto) {
+function siegeSurvivors(ctx,res,originalAtk,originalDef) {
   const rebuild=(side,original)=>res[side].filter(u=>u.troops>0).map(u=>{
     const source=original.find(x=>(x.officer?.name||'수비병')===u.name);
     return {...source,officer:off(u.name)||source?.officer||null,troops:u.troops,
@@ -3366,8 +3506,9 @@ function continueSiege(ctx,res,originalAtk,originalDef,playerSide,auto) {
     def.forEach((u,i)=>{const total=u.troops+counts[i];u.training=Math.round((u.training*u.troops+city.training*counts[i])/total);u.morale=Math.round((u.morale*u.troops+city.morale*counts[i])/total);u.troops=total;});
   }
   else if(reserve) {
-    const city=G.cities[ctx.to],counts=defenseUnits(ctx.to);
-    const amounts=distribute(reserve,counts.length);counts.forEach((u,i)=>def.push({...u,troops:amounts[i],training:city.training,morale:city.morale}));
+    const city=G.cities[ctx.to];
+    // 야전에서 전멸한 장수를 다시 살리지 않고 성에 남아 있던 수비병이 농성한다.
+    def.push({officer:null,troops:reserve,branch:'보병',form:'방원',training:city.training,morale:city.morale});
   }
   ctx.defReserve=0;
   ctx.fieldLost={atk:res.atk.filter(u=>u.troops<=0),def:res.def.filter(u=>u.troops<=0)};
@@ -3376,6 +3517,11 @@ function continueSiege(ctx,res,originalAtk,originalDef,playerSide,auto) {
   ctx.extra=[];
   ctx.siege=true;ctx.roundOffset=(ctx.roundOffset||0)+(res.rounds||0);
   ctx.preserveReinf=true;
+  return {atk,def};
+}
+
+function continueSiege(ctx,res,originalAtk,originalDef,playerSide,auto) {
+  const {atk,def}=siegeSurvivors(ctx,res,originalAtk,originalDef);
   if(!atk.length || !def.length) {
     const pack=units=>units.map(u=>({name:u.officer?.name||'',troops:u.troops}));
     finishBattle(ctx,{winner:atk.length?'attacker':'defender',atk:pack(atk),def:pack(def),captured:[],pending:[]});return;
@@ -4628,22 +4774,22 @@ function execAIAct(fid, a, cb) {
       log('⚔ ' + f.name + '군이 ' + t.name + '으로 출진했습니다!', 'war');
       openDefenseDeploy(ctx, atkUnits);
     } else {
+      const units = atkUnits.concat(ctx.extra.flatMap(e=>e.units));
+      ctx.siege=!aiFieldDefense(t,units);
+      const defenders=prepareFieldDefense(ctx,defenseUnits(a.target));
       playAttackIntro(ctx, () => {
-        const units = atkUnits.concat(ctx.extra.flatMap(e=>e.units));
-        ctx.siege=!aiFieldDefense(t,units);
         // 수비 병력이 없는 성 — 전투 없이 자동 후퇴
         // 자동 후퇴 결과는 내부에서 합동 부대를 따로 더하므로 본대만 넘긴다 (병력 중복 합산 방지)
         if (!resolveAutoRetreat(ctx, atkUnits)) {
-          let result=autoResolve(ctx,units,defenseUnits(a.target),ctx.siege);
+          let result=autoResolve(ctx,units,defenders,ctx.siege);
           if(!ctx.siege&&result.winner==='attacker') {
-            const rebuild=(list,rows)=>rows.map(r=>({...list.find(u=>(u.officer?.name||'')===r.name),...r}));
-            ctx.siege=true;ctx.roundOffset=result.rounds;
-            result=autoResolve(ctx,rebuild(units,result.atk),rebuild(defenseUnits(a.target),result.def),true);
+            const survivors=siegeSurvivors(ctx,result,units,defenders);
+            result=autoResolve(ctx,survivors.atk,survivors.def,true);
           }
-          applyBattleResult(ctx,result);
+          finishBattle(ctx,result);
         }
         setTimeout(cb, 0);
-      });
+      },ctx.siege===false);
     }
     return;
   }
@@ -4900,9 +5046,9 @@ function officerBodyHtml(all) {
     const allList = sortOfficers(visibleOfficers(), true);
     const rows = allList.map(o => {
       const f = G.factions[o.faction], st = officerState(o);
-      return '<tr' + portraitAttr(o.name) + '><td>' + portraitHtml(o.name, 22) + o.name + (isLeader(o.name) ? ' ★' : '') + '</td>' +
+      return '<tr' + portraitAttr(o.name) + '><td class="officer-name">' + portraitHtml(o.name, 22) + o.name + (isLeader(o.name) ? ' ★' : '') + '</td>' +
         '<td>' + (f ? '<i class="fdot" style="background:' + f.color + '"></i>' + f.name : '재야') + '</td>' +
-        '<td>' + o.city + '</td><td>' + o.wu + '</td><td>' + o.zhi + '</td><td>' + o.pol + '</td><td>' + o.cha + '</td>' +
+        '<td class="officer-city">' + o.city + '</td><td>' + o.wu + '</td><td>' + o.zhi + '</td><td>' + o.pol + '</td><td>' + o.cha + '</td>' +
         '<td><b>' + (o.wu + o.zhi + o.pol + o.cha) + '</b></td><td>' + (o.skill || '-') + (CombatRules.description(o)?'<br><span class="muted">'+CombatRules.description(o)+'</span>':'') + '</td>' +
         '<td style="color:' + st[1] + '">' + st[0] + '</td></tr>';
     }).join('');
@@ -4911,11 +5057,11 @@ function officerBodyHtml(all) {
     const powN = vis.filter(o => o.status === 'pow').length;
     return '<p class="muted" style="margin:0 0 8px">소속 ' + (allList.length - freeN - powN) + ' · 재야 ' + freeN + ' · 포로 ' + powN +
       ' — 위 정렬 버튼으로 열을 바꿀 수 있습니다. 재야·포로는 해당 도시에서 [등용]으로 설득합니다.</p>' +
-      '<table><tr><th>이름</th><th>소속</th><th>도시</th><th>무력</th><th>지력</th><th>정치</th><th>매력</th><th>합계</th><th>특기</th><th>상태</th></tr>' +
-      rows + '</table>';
+      '<div class="officer-table-scroll" role="region" aria-label="전체 무장 목록 · 좌우로 스크롤" tabindex="0"><table class="officer-table"><tr><th>이름</th><th>소속</th><th>도시</th><th>무력</th><th>지력</th><th>정치</th><th>매력</th><th>합계</th><th>특기</th><th>상태</th></tr>' +
+      rows + '</table></div>';
   }
   const list = sortOfficers(officersOf(G.pf), false);
-  const rows = list.map(o => '<tr' + portraitAttr(o.name) + '><td>' + portraitHtml(o.name, 22) + o.name + (isLeader(o.name) ? ' ★' : '') + '</td><td>' + o.city + '</td><td>' + o.wu + '</td><td>' + o.zhi +
+  const rows = list.map(o => '<tr' + portraitAttr(o.name) + '><td class="officer-name">' + portraitHtml(o.name, 22) + o.name + (isLeader(o.name) ? ' ★' : '') + '</td><td class="officer-city">' + o.city + '</td><td>' + o.wu + '</td><td>' + o.zhi +
     '</td><td>' + o.pol + '</td><td>' + o.cha + '</td><td>' + (o.skill || '-') + (CombatRules.description(o)?'<br><span class="muted">'+CombatRules.description(o)+'</span>':'') + '</td>' +
     '<td style="color:' + (o.loyalty < 45 ? 'var(--bad)' : (o.loyalty >= 80 ? 'var(--good)' : 'inherit')) + '">' + o.loyalty + '</td>' +
     '<td>' + (o.used ? '<span style="color:var(--muted)">완료</span>' : '<span style="color:var(--good)">가능</span>') + '</td></tr>').join('');
@@ -4924,13 +5070,13 @@ function officerBodyHtml(all) {
   let ph = '';
   if (pows.length) {
     ph = '<h3 style="margin-top:12px">포로 (' + pows.length + '명)</h3>' +
-      '<table><tr><th>이름</th><th>도시</th><th>원소속</th><th>무력</th><th>지력</th><th>특기</th></tr>' +
-      pows.map(o => '<tr' + portraitAttr(o.name) + '><td>' + portraitHtml(o.name, 22) + o.name + '</td><td>' + o.city + '</td><td>' +
+      '<div class="officer-table-scroll" role="region" aria-label="포로 목록 · 좌우로 스크롤" tabindex="0"><table class="officer-table"><tr><th>이름</th><th>도시</th><th>원소속</th><th>무력</th><th>지력</th><th>특기</th></tr>' +
+      pows.map(o => '<tr' + portraitAttr(o.name) + '><td class="officer-name">' + portraitHtml(o.name, 22) + o.name + '</td><td class="officer-city">' + o.city + '</td><td>' +
         (G.factions[o.faction] ? G.factions[o.faction].name : '재야') + '</td><td>' + o.wu + '</td><td>' + o.zhi +
-        '</td><td>' + (o.skill || '-') + '</td></tr>').join('') + '</table>';
+        '</td><td>' + (o.skill || '-') + '</td></tr>').join('') + '</table></div>';
   }
-  return '<table><tr><th>이름</th><th>도시</th><th>무력</th><th>지력</th><th>정치</th><th>매력</th><th>특기</th><th>충성</th><th>행동</th></tr>' +
-    rows + '</table>' + ph +
+  return '<div class="officer-table-scroll" role="region" aria-label="내 무장 목록 · 좌우로 스크롤" tabindex="0"><table class="officer-table"><tr><th>이름</th><th>도시</th><th>무력</th><th>지력</th><th>정치</th><th>매력</th><th>특기</th><th>충성</th><th>행동</th></tr>' +
+    rows + '</table></div>' + ph +
     '<p class="muted" style="margin-top:8px">★ = 세력 수장 (충성 100, 포로·배신 불가) · 포로는 해당 도시에서 [등용]으로 설득할 수 있습니다.<br>행동이 "완료"인 무장은 그 달 다른 명령에 참여할 수 없습니다. (포상·외교 제외) 정렬 버튼으로 열을 바꿀 수 있습니다.</p>';
 }
 function officerTitleText(all) {
@@ -4972,7 +5118,7 @@ function openHelp() {
   showModal('<h3>게임 방법 — 삼국지 : 천하통일</h3>' +
     '<p><b>파일 이전</b> : [저장]의 JSON 내보내기, [불러오기]의 JSON 가져오기를 이용합니다. 파일을 검사한 뒤 미리보기에서 [이어 하기]로 적용합니다.</p>' +
     '<p><b>목표</b> : 기본 목표는 모든 도시 점령입니다. 새 게임 첫 명령 전 [위임·목표] → [승리 목표]에서 패권·24개월 도전·시나리오 목표도 선택할 수 있습니다.</p>' +
-    '<p><b>야전과 공성</b> : 출진 편성의 [공략 방식]에서 야전 선행 / 바로 공성 / 수비군 판단을 고릅니다. 수비 편성에서는 [수비 방침]으로 야전 요격 또는 농성을 선택합니다. 야전에서 수비군이 이기면 침공을 막습니다. 공격군 승리 또는 [성으로 후퇴] 시 생존 부대와 예비 병력으로 공성을 이어가며, 군량은 누적 차감됩니다. 수비 병력이 전멸하고 예비 병력도 없으면 바로 점령합니다.</p>' +
+    '<p><b>야전과 공성</b> : 출진 편성의 [공략 방식]에서 야전 선행 / 바로 공성 / 수비군 판단을 고릅니다. 수비 편성에서는 [수비 방침]으로 야전 요격 또는 농성을 선택합니다. 야전에서 수비군이 이기면 침공을 막습니다. 공격군 승리 또는 [성으로 후퇴] 시 생존 부대와 예비 병력으로 공성을 이어가며, 군량은 누적 차감됩니다. 예비 병력을 지정하지 않았다면 기존 수비군의 25%를 성에 남겨 공성을 대비합니다. 야전 승리 후에는 공성에서 승리해야 도시를 점령합니다.</p>' +
     '<p><b>도시 위임</b> : [위임·목표]에서 농업·상업·군사·최전선·후방 지원을 지정합니다. 턴 종료 시 남은 명령권으로 도시당 한 번 실행하며 금·무장 행동을 사용합니다.</p>' +
     '<p><b>전체위임·AI 관전</b> : [위임·목표] → [전체위임 시작]으로 내정·외교·군사·전투와 월 진행을 AI에 맡길 수 있습니다. 타이틀의 [전체 AI 관전]은 세력 선택 없이 모든 세력을 AI가 운영합니다. 상단 버튼으로 일시정지·재개할 수 있고, 창을 열면 자동 진행이 일시정지합니다. 전체위임은 위임 메뉴에서 해제할 수 있습니다.</p>' +
     '<p><b>장수 개성</b> : 제갈량·관우·장비·조조·주유·여포는 고유 능력이 있습니다. 무장 일람과 부대 설명에서 확인합니다. 12개 관계 조합은 같은 전장의 병력 1,000명 이상인 상대 장수가 있어야 보너스를 제공합니다.</p>' +
@@ -4981,7 +5127,7 @@ function openHelp() {
     '<p><b>내정</b> : 개발(농업→군량) · 상업(→금) · 치안(금·군량 생산/징병 효율) · 수복(방어도). <b>방어도 0~50의 보정은 기존대로 유지하고, 50 초과부터 추가로 강화됩니다. 방어력 보정은 50에서 +12.5%, 100에서 +38%입니다.</b> 1/2/3명 배치에 금 60/95/130과 명령 1이 들고, 추가 무장의 효과는 65%/40%로 줄어듭니다. 정치·지력과 명재 특기가 효과를 높입니다. 선택 화면에 정확한 비용·효과·월 생산 증가를 표시하며, 최대치 근처에서는 실제 상승분만큼 비용도 줄어듭니다.</p>' +
     '<p><b>재정·보급</b> : 매달 병력 500명당 금 1, 평시 90명당 군량 1을 소비합니다(도시별 올림). 인구 상한 초과 병력의 군량은 2배입니다. 치안은 금·군량 생산 모두에 영향을 줍니다. 도시 패널에서 모든 보유 도시를 합산한 월 순증감·군량 지속 기간을 확인하세요. [군량 매입]은 금 100/300/600으로 군량 200/600/1,200을 얻습니다. [군량 매각]은 군량 200/600/1,200을 금 80/240/480에 팝니다(매입가 대비 20% 낮음). 매입·매각 모두 명령 1을 쓰며 무장은 필요 없습니다. 군량 부족 시 미지급 비율에 따라 병력·사기가 감소하고, 급료 부족 시 사기가 감소합니다. 전투에서는 참가 병력과 행군 중인 원군 600명당 매 라운드 군량 1을 추가 소비합니다. 보급이 부족하면 해당 진영의 사기가 라운드당 최대 8 내려갑니다. 편성 화면에서 예상 소모를, 전장에서 누적 소모·잔여 군량을 확인하세요. 새 게임은 평시 주둔군 6개월분(최소 600)을 비축합니다.</p>' +
     '<p><b>군사</b> : 징병(1,000명당 금 80·치안 -5·신병 훈련 30/사기 55, <b>도시당 월 1회</b>) · 모병(1,000명당 금 160·치안 -1·신병 훈련 55/사기 75, 같은 달에 반복 가능). 충원·이동 시 기존 병력과 훈련·사기를 인원 비율로 합산합니다. 훈련(훈련도·사기↑) · 이동(아군 도시로, <b>무장 인원 제한 없음</b>, 출발 도시 병력 전부 이동 가능 — 목적지 인구 상한을 넘겨도 주둔 가능. 무장을 고르면 <b>목적지 후보 도시가 지도에 금색 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>. 지도 아래 띠의 [목록에서 선택]으로 목록 선택도 가능) · 출진(적 도시 공격 — 무장을 고르면 <b>목적지 후보 적 도시가 지도에 붉은 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>(지도 아래 띠의 [목록에서 선택]도 가능). 인접 아군 도시와 <b>합동 출진</b> → 전술 전투. 합류 도시 부대는 원군처럼 늦게 도착하고, 전투가 끝나면 무장·잔존 병력이 각자 출발 도시로 복귀).</p>' +
-    '<p><b>전투</b> : 부대별로 이동/공격/계략(화계·혼란·고무)/일기토/진형을 사용합니다. <b>이동한 뒤에도 같은 턴에 공격할 수 있습니다.</b> 병과 상성(기병→궁병→보병→기병), 진형, 지형(숲·산·성)을 활용하세요. <b>기병은 [돌격]</b>으로 최대 3칸까지 적 부대를 뚫고 반대편으로 빠져나올 수 있지만 <b>성은 빈 성·아군 성을 포함해 관통하거나 착지할 수 없습니다.</b>  <b>보병은 2부대 이상이 모이면 [일제공격]</b>으로 같은 적을 동시에 공격합니다(반격 없음). <b>궁병은 [불화살]</b>로 적을 불태워 2라운드간 화상 피해를 남길 수 있고(부대당 2회, 숲에서 1.5배), <b>궁병이 아닌 부대가 근접 공격하면 상대의 반격</b>으로 아군도 피해를 입습니다. <b>성에서 공격하면 받는 반격 피해가 지형 방어에 더해 25% 줄어듭니다.</b> 전투 중에는 인접 아군 도시에서 <b>원군</b>을 보낼 수 있고, 원군은 행군에 며칠이 걸려 도착합니다(진군 상황은 전장 위쪽 상태바에 표시). <b>적도 병력이 불리해지면 원군을 보내므로</b> 상태바의 적 원군 표시를 확인하세요. <b>수비 편성 중 미리 요청한 원군은 플레이어·AI 모두 2라운드 뒤 도착</b>합니다. 적이 우리 성을 공격하면 전투 전에 <b>수비 편성</b> 창이 열려 출진처럼 무장·병과·진형·병력을 직접 지정할 수 있습니다(창을 닫으면 자동 편성). <b>AI도 매 라운드 상황에 맞춰 진형을 바꿉니다</b>(성 수비=방원, 궁병=학익, 기병=봉시, 보병=거리별 방원·안행·어린). 진형 전환은 <b>부대마다 첫 1회가 행동을 소모하지 않습니다</b>(이후 전환은 행동 소모, AI도 동일). 전투는 최대 <b>15라운드</b>입니다. <b>최대 라운드가 끝나면 공격군이 자동으로 후퇴하고 방어군이 승리합니다.</b> 공성전에서 <b>세 성의 깃발이 모두 공격군으로 바뀌면 방어측 패배</b>입니다. <b>수비측은 후퇴할 인접 아군 도시가 있으면 [후퇴]</b>로 성을 내주고 잔존 병력의 80%를 이끌고 빠져나갈 수 있습니다(무장도 함께 이동). <b>수비 편성 창에서도 [후퇴]</b>를 눌러 싸우지 않고 성을 내주고 빠져나갈 수 있습니다(편성 중 요청한 원군은 취소되어 출발 도시로 돌아갑니다). <b>[다음 턴]</b> 버튼으로 남은 부대를 대기시키고 턴을 넘길 수 있습니다.</p>' +
+    '<p><b>전투</b> : 부대별로 이동/공격/계략(화계·혼란·고무)/일기토/진형을 사용합니다. <b>이동한 뒤에도 같은 턴에 공격할 수 있습니다.</b> 병과 상성(기병→궁병→보병→기병), 진형, 지형(숲·산·성)을 활용하세요. <b>기병은 [돌격]</b>으로 최대 3칸까지 적 부대를 뚫고 반대편으로 빠져나올 수 있지만 <b>출발점·경로·착지점이 모두 평지여야 하며 숲·산·성·물·여울에서는 돌격할 수 없습니다.</b>  <b>보병은 2부대 이상이 모이면 [일제공격]</b>으로 같은 적을 동시에 공격합니다(반격 없음). <b>궁병은 [불화살]</b>로 적을 불태워 2라운드간 화상 피해를 남길 수 있고(부대당 2회, 숲에서 1.5배), <b>궁병이 아닌 부대가 근접 공격하면 상대의 반격</b>으로 아군도 피해를 입습니다. <b>성에서 공격하면 받는 반격 피해가 지형 방어에 더해 25% 줄어듭니다.</b> 전투 중에는 인접 아군 도시에서 <b>원군</b>을 보낼 수 있고, 원군은 행군에 며칠이 걸려 도착합니다(진군 상황은 전장 위쪽 상태바에 표시). <b>적도 병력이 불리해지면 원군을 보내므로</b> 상태바의 적 원군 표시를 확인하세요. <b>수비 편성 중 미리 요청한 원군은 플레이어·AI 모두 2라운드 뒤 도착</b>합니다. 적이 우리 성을 공격하면 전투 전에 <b>수비 편성</b> 창이 열려 출진처럼 무장·병과·진형·병력을 직접 지정할 수 있습니다(창을 닫으면 자동 편성). <b>AI도 매 라운드 상황에 맞춰 진형을 바꿉니다</b>(성 수비=방원, 궁병=학익, 기병=봉시, 보병=거리별 방원·안행·어린). 진형 전환은 <b>부대마다 첫 1회가 행동을 소모하지 않습니다</b>(이후 전환은 행동 소모, AI도 동일). 전투는 최대 <b>15라운드</b>입니다. <b>최대 라운드가 끝나면 공격군이 자동으로 후퇴하고 방어군이 승리합니다.</b> 공성전에서 <b>세 성의 깃발이 모두 공격군으로 바뀌면 방어측 패배</b>입니다. <b>수비측은 후퇴할 인접 아군 도시가 있으면 [후퇴]</b>로 성을 내주고 잔존 병력의 80%를 이끌고 빠져나갈 수 있습니다(무장도 함께 이동). <b>수비 편성 창에서도 [후퇴]</b>를 눌러 싸우지 않고 성을 내주고 빠져나갈 수 있습니다(편성 중 요청한 원군은 취소되어 출발 도시로 돌아갑니다). <b>[다음 턴]</b> 버튼으로 남은 부대를 대기시키고 턴을 넘길 수 있습니다.</p>' +
     '<p><b>병력과 회복</b> : 현재 병력이 많을수록 공격·반격이 강해지며, 3,000명을 넘는 대부대는 증가폭이 완만해집니다. 1,000명 미만 부대는 사기·화상 효과와 적 계략 성공률이 낮고, 화계 피해도 병력에 비례해 줄어듭니다. 일기토 신청은 부대당 전투 중 1회입니다. 고무는 반드시 성공하며, 훈련도가 100이어도 [훈련]으로 사기를 회복할 수 있습니다.</p>' +
     '<p><b>인사</b> : 등용(재야·포로 설득) · 포상(금 300, 충성도↑). 충성도가 45 미만이면 배신할 수 있습니다. 세력 수장(★)은 충성 100으로 배신·포로가 없습니다.</p>' +
     '<p><b>시기별 등장</b> : 194년 이후 인물(제갈량·사마의·강유 등)은 <b>역사적 등장 시기</b>에 맞춰 해당 지역에 나타납니다. 등장한 달에는 전황 기록에 알림이 뜨고, 그 도시를 지배하는 세력이 있으면 곧바로 합류하며, 아니면 재야로 남아 [등용]으로 설득할 수 있습니다. 아직 등장하지 않은 인물은 무장 일람에 표시되지 않습니다.</p>' +
@@ -5228,7 +5374,7 @@ const Game = {
   openReinforce, pickReinforce, doReinforce, requestAllyReinforce,
   cmdHire, doHire, cmdReward, doReward,
   diploGift, diploAlly, diploBreak,
-  selectCity, toTitle, zoomBy, zoomReset, setZoom,
+  selectCity, toTitle, zoomBy, zoomReset, setZoom, mobilePanel,
   get state() { return G; },
   get view() { return view; },
   _debug: {

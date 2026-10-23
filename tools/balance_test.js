@@ -26,7 +26,7 @@ const battle = fs.readFileSync(process.env.BALANCE_BATTLE_SOURCE || path.join(ro
 assert(battle.includes(marker), 'battle probe insertion point changed');
 vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js', 'battle-terrain.js'].map(f =>
   fs.readFileSync(f==='combat-rules.js'&&process.env.BALANCE_RULES_SOURCE?process.env.BALANCE_RULES_SOURCE:path.join(root, 'js', f), 'utf8')).join('\n') + '\n' +
-  battle.replace(marker, '    probe: { calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct, checkForts, syncForts, fortDuty, chargeOptions, attackAct, doCharge, attackTargets, volleyPartners, doVolley },\n' + marker), sandbox);
+  battle.replace(marker, '    probe: { calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct, checkForts, syncForts, fortDuty, chargeOptions, attackAct, doCharge, attackTargets, volleyPartners, doVolley, moveRange, costField, fordPath },\n' + marker), sandbox);
 const { Game, Battle } = sandbox, p = Battle.probe;
 const rules=vm.runInContext('CombatRules',sandbox);
 const officer = (name, wu = 80, zhi = 80) => ({ name, wu, zhi, pol: 80, cha: 80, skill: '' });
@@ -239,7 +239,9 @@ for(const city of Object.values(Game.state.cities)) for(const siege of [false,tr
   for(const edge of b.geo.edgeFords) for(const side of ['atk','def']) for(const branch of ['보병','기병']) {
     a.side=mate.side=side;d.side=side==='atk'?'def':'atk';a.branch=branch;
     Object.assign(a,side==='atk'?edge.from:edge.to);Object.assign(d,side==='atk'?edge.to:edge.from);
-    mate.x=0;mate.y=0;mate.acted=false;a.acted=false;a.moved=false;
+    const free=b.terrain.flatMap((row,y)=>row.map((t,x)=>({t,x,y}))).find(c=>c.t<4&&
+      Math.abs(c.x-a.x)+Math.abs(c.y-a.y)>2&&Math.abs(c.x-d.x)+Math.abs(c.y-d.y)>2);
+    mate.x=free.x;mate.y=free.y;mate.acted=false;a.acted=false;a.moved=false;
     b.side=b.playerSide=side;b.sel=a;b.mode='select';b.busy=false;
     const tag=city.name+'/'+siege+'/'+side+'/'+branch;
     assert(!p.attackTargets(a).includes(d),tag+': cross-river attack target');
@@ -262,7 +264,7 @@ for(const city of Object.values(Game.state.cities)) for(const siege of [false,tr
 // An ally across the river cannot join a same-bank infantry volley, from either side.
 for(const side of ['atk','def']) {
   b=setup([unit('A',3000),unit('ally',3000)],[unit('D',3000)]);
-  b.geo=geo.build({name:'여남'},false);b.terrain=b.geo.terrain;
+  b.geo=geo.build({name:'여남'},true);b.terrain=b.geo.terrain;
   a=b.units[0];const mate=b.units[1];d=b.units[2];
   a.side=mate.side=side;d.side=side==='atk'?'def':'atk';
   Object.assign(a,{x:7,y:4});Object.assign(d,{x:6,y:4});Object.assign(mate,{x:6,y:5});
@@ -276,6 +278,35 @@ for(const side of ['atk','def']) {
   const hp=d.troops;p.attackAct(a,d);assert(d.troops<hp,'ford attack did not execute/'+side);
 }
 console.log('[OK] '+riverChecks+' regional river/side/branch cases: melee, charge, volley, duel blocked; archery, same-bank volley and ford combat retained');
+
+// Movement highlights, reverse AI search and animation paths must agree on real costs.
+for(const branch of ['보병','기병','궁병']) for(const [terrain,cost] of [[0,1],[1,branch==='기병'?2:1],[2,branch==='기병'?3:2],[5,branch==='기병'?3:2]]) {
+  b=setup([unit('A',3000,branch)],[unit('D',3000)]);a=b.units[0];d=b.units[1];
+  b.terrain=Array.from({length:9},()=>Array(13).fill(4));b.terrain[4]=Array(13).fill(terrain);
+  a.x=0;a.y=4;a.form='안행';d.x=12;d.y=4;
+  const budget=branch==='기병'?6:4,reach=Math.floor(budget/cost);
+  assert.equal(rules.moveCost(branch,terrain),cost);
+  const range=p.moveRange(a);
+  assert(range.some(t=>t.x===reach&&t.y===4),branch+'/'+terrain+': legal movement omitted');
+  assert(!range.some(t=>t.x>reach),branch+'/'+terrain+': exceeded movement budget');
+  assert.equal(p.costField(a,4,4)[a.y*13+a.x],4*cost,'AI uses a different terrain cost');
+  assert.equal(p.fordPath(a,0,4,reach,4).length,reach+1,'animation path disagrees with range');
+}
+b=setup();a=b.units[0];d=b.units[1];
+const dry=rules.damage(a,d,{terrain:0,random:1});
+assert(rules.damage(a,d,{terrain:5,random:1})>dry,'a unit exposed in a ford must take more damage');
+for(const side of ['atk','def']) for(const terrain of [1,2,3,4,5]) {
+  b=setup();a=b.units[0];d=b.units[1];a.branch='기병';a.side=side;d.side=side==='atk'?'def':'atk';
+  a.x=3;a.y=4;d.x=4;d.y=4;
+  assert(p.chargeOptions(a).some(c=>c.x===5&&c.y===4),'plain charge missing');
+  b.terrain[4][3]=terrain;
+  assert.equal(p.chargeOptions(a).length,0,'charge started on rough terrain/'+side+'/'+terrain);
+  b.terrain[4][3]=0;b.terrain[4][4]=terrain;
+  assert(!p.chargeOptions(a).some(c=>c.x===5&&c.y===4),'charge traversed rough terrain/'+side+'/'+terrain);
+  b.terrain[4][4]=0;b.terrain[4][5]=terrain;
+  assert(!p.chargeOptions(a).some(c=>c.x===5&&c.y===4),'charge landed on rough terrain/'+side+'/'+terrain);
+}
+console.log('[OK] branch-specific terrain costs agree across movement/AI/animation; ford exposure and plain-only charges apply to both armies');
 }
 
 if (process.argv.includes('--simulate') || process.argv.includes('--simulate-only')) {

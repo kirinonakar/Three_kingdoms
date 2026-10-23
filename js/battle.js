@@ -10,6 +10,31 @@ const Battle = (function () {
   // 부대 카드 배율 — 54 기준 카드가 타일 밖으로 튀어나오지 않게 살짝 줄인다
   const CARD_FIT = 0.86;
   let B = null, cv = null, ctx = null;
+  const camera = { scale: 1, px: 0, py: 0 };
+  let navigation = null, canvasObserver = null;
+  let fittedViewport = '';
+
+  function setCamera(next) {
+    Object.assign(camera, next);
+    camera.scale = cl(camera.scale, 1, 4);
+    camera.px = cl(camera.px, COLS * TILE * (1 - camera.scale), 0);
+    camera.py = cl(camera.py, ROWS * TILE * (1 - camera.scale), 0);
+    const label = $('bZoomLabel');
+    if (label) label.textContent = '×' + camera.scale.toFixed(2);
+    hideUnitTooltip();
+    draw();
+  }
+  function zoomBy(factor) {
+    const scale = cl(camera.scale * factor, 1, 4), ratio = scale / camera.scale;
+    setCamera({ scale, px: COLS * TILE / 2 - (COLS * TILE / 2 - camera.px) * ratio,
+      py: ROWS * TILE / 2 - (ROWS * TILE / 2 - camera.py) * ratio });
+  }
+  function zoomReset() { setCamera({ scale: 1, px: 0, py: 0 }); }
+  function boardPoint(e) {
+    const r = cv.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width * COLS * TILE - camera.px) / camera.scale / TILE,
+      y: ((e.clientY - r.top) / r.height * ROWS * TILE - camera.py) / camera.scale / TILE };
+  }
 
   /* 사운드 — audio.js 가 없으면 조용히 넘어간다 */
   const sfx = (n, details) => { if (typeof Sound !== 'undefined' && Sound) Sound.sfx(n, details); };
@@ -35,10 +60,11 @@ const Battle = (function () {
 
 
   /* 도시별 북향 전술 약도 — 강안 도형과 이동 지형을 같은 데이터로 생성한다. */
-  const buildTerrain = (city, siege) => BattleTerrain.build(city, siege);
+  const buildTerrain = (city, siege, approach) => BattleTerrain.build(city, siege, approach);
 
   /* ── 전투 개시 ─────────────────────────────────────── */
   function start(opts) {
+    Object.assign(camera, { scale: 1, px: 0, py: 0 });
     B = {
       opts, cityDef: opts.siege && opts.city ? (opts.city.def ?? 50) : 0,
       round: 1, maxRound: 15, over: false, auto: !!opts.auto,
@@ -46,7 +72,7 @@ const Battle = (function () {
       log: [], floats: [], fx: [], busy: false, units: [], terrain: [], pending: [], supply: null, supplyRound: 0
     };
     // 도시별 지리 약도에서 하천·산지·숲·성곽 생성
-    B.geo = buildTerrain(opts.city || { name: opts.atk.name, x: 560, y: 360 }, !!opts.siege);
+    B.geo = buildTerrain(opts.city || { name: opts.atk.name, x: 560, y: 360 }, !!opts.siege, opts.approach);
     B.terrain = B.geo.terrain;
     if(typeof Sound!=='undefined' && Sound.setScene) Sound.setScene({theme:B.geo.theme,tension:.35});
     (opts.atk.units || []).forEach(u => B.units.push(mkUnit('atk', u)));
@@ -55,6 +81,7 @@ const Battle = (function () {
     place();
     buildUI();
     bLog('⚔ ' + opts.atk.name + '군 vs ' + opts.def.name + '군 — ' + opts.city.name + (opts.siege ? ' 공성전' : ' 야전') + ' 개시!');
+    bLog('🗺 '+B.geo.site+' — '+B.geo.tactics);
     sfx('battleStart');
     bgm('battle');
     roundStart();
@@ -198,10 +225,12 @@ const Battle = (function () {
         '</div>' +
         '<div class="battle-body">' +
           '<div class="battle-map">' +
-            '<div class="battle-geography"><div><b>' + B.geo.region + '</b><span>' + B.geo.detail + '</span></div><span class="north">↑ 북</span></div>' +
-            '<canvas id="battleCanvas" aria-label="' + B.opts.city.name + ' 전술 전장" width="' + (COLS * TILE) + '" height="' + (ROWS * TILE) + '"></canvas>' +
-            '<div class="terrain-legend"><span><i class="land"></i>평지</span><span><i class="forest"></i>숲 +15%</span><span><i class="mountain"></i>산 +25%</span>' + (B.opts.siege?'<span><i class="fort"></i>성 +40%</span>':'') + '<span><i class="water"></i>물 · 진입 불가</span><span><i class="ford"></i>여울 · 도하 가능</span></div>' +
+            '<div class="battle-geography"><div><b>' + B.geo.region + ' · '+B.geo.site+'</b><span>' + (B.opts.siege?B.geo.detail:B.geo.tactics) + '</span></div><span class="north">↑ 북</span></div>' +
+            '<div class="battle-viewport" id="bViewport"><canvas id="battleCanvas" aria-label="' + B.opts.city.name + ' 전술 전장" width="' + (COLS * TILE) + '" height="' + (ROWS * TILE) + '"></canvas>' +
+            '<div class="battle-zoom" role="group" aria-label="전장 배율"><button type="button" onclick="Battle.zoomBy(1.25)" aria-label="전장 확대">＋</button><button type="button" onclick="Battle.zoomBy(.8)" aria-label="전장 축소">－</button><button type="button" onclick="Battle.zoomReset()" aria-label="전장 전체 보기">⟲</button><span id="bZoomLabel">×1.00</span></div></div>' +
+            '<div class="terrain-legend"><span><i class="land"></i>평지</span><span><i class="forest"></i>숲 +15%</span><span><i class="mountain"></i>산 +25%</span>' + (B.opts.siege?'<span><i class="fort"></i>성 +40%</span>':'') + '<span><i class="water"></i>물 · 진입 불가</span><span><i class="ford"></i>여울 · 방어 -15% · 이동 2~3</span></div>' +
             '<div class="map-hint" id="bTerrainInfo"></div>' +
+            '<div class="gesture-hint">두 손가락으로 확대·축소 · 드래그로 이동 · 부대를 눌러 선택</div>' +
             '<details class="text-board battle-directory" id="bDirectory"><summary>전장 목록 · 좌표로 조작</summary><div id="bTextBoard"></div></details>' +
           '</div>' +
           '<div class="battle-side">' +
@@ -223,8 +252,19 @@ const Battle = (function () {
       '</div></div>';
     cv = $('battleCanvas');
     ctx = cv.getContext('2d');
+    navigation = bindCanvasNavigation(cv, {
+      size: () => ({ width: COLS * TILE, height: ROWS * TILE, maxScale: 4 }),
+      read: () => camera, write: setCamera,
+      begin: hideUnitTooltip
+    });
     cv.addEventListener('click', onClick);
-    cv.addEventListener('mousemove', inspectTerrain);
+    cv.addEventListener('pointermove', e => { if (!navigation.active && e.pointerType !== 'touch') inspectTerrain(e); });
+    cv.addEventListener('wheel', e => {
+      e.preventDefault();
+      const p = boardPoint(e), scale = cl(camera.scale * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1) * .0012), 1, 4);
+      const ax = p.x * TILE * camera.scale + camera.px, ay = p.y * TILE * camera.scale + camera.py;
+      setCamera({ scale, px: ax - p.x * TILE * scale, py: ay - p.y * TILE * scale });
+    }, { passive: false });
     cv.addEventListener('mouseleave', () => { const el=$('bTerrainInfo'); if(el) el.textContent='';hideUnitTooltip(); });
     const board=$('bTextBoard');
     board.addEventListener('mousemove',e=>{
@@ -239,19 +279,23 @@ const Battle = (function () {
       window.addEventListener('orientationchange', fitCanvas);
     }
     renderBlog();
+    if (typeof ResizeObserver !== 'undefined') {
+      canvasObserver = new ResizeObserver(fitCanvas);
+      canvasObserver.observe($('bViewport'));
+    }
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fitCanvas);
     else fitCanvas();
   }
 
   function inspectTerrain(e) {
     if(!B||!cv) return;
-    const r=cv.getBoundingClientRect(), x=Math.floor((e.clientX-r.left)/r.width*COLS), y=Math.floor((e.clientY-r.top)/r.height*ROWS);
+    const p=boardPoint(e), x=Math.floor(p.x), y=Math.floor(p.y);
     if(x<0||y<0||x>=COLS||y>=ROWS) {hideUnitTooltip();return;}
-    const names=['평지 · 기본 이동','숲 · 방어 +15%','산 · 방어 +25%','성 · 방어 +40%','물 · 진입 불가','여울 · 도하 가능'];
+    const names=['평지 · 이동 1 · 기병 돌격 가능','숲 · 방어 +15% · 보병/궁병 이동 1 · 기병 이동 2 · 돌격 불가','산 · 방어 +25% · 보병/궁병 이동 2 · 기병 이동 3 · 돌격 불가','성 · 방어 +40%','물 · 진입 불가','여울 · 방어 -15% · 보병/궁병 이동 2 · 기병 이동 3 · 돌격 불가'];
     const fords=fordDirections(x,y);
     const el=$('bTerrainInfo');if(el) el.textContent=(x+1)+'열 '+(y+1)+'행 · '+names[B.terrain[y][x]]+
       (fords.length?' · '+fords.join('·')+' 여울로 도하 가능':'');
-    const moving=B.units.find(u=>{const p=u.alive&&animPos(u);return p && Math.abs(p.x+.5-(e.clientX-r.left)/r.width*COLS)<.44 && Math.abs(p.y+.5-(e.clientY-r.top)/r.height*ROWS)<.44;});
+    const moving=B.units.find(u=>{const a=u.alive&&animPos(u);return a && Math.abs(a.x+.5-p.x)<.44 && Math.abs(a.y+.5-p.y)<.44;});
     showUnitTooltip(moving || unitAt(x,y),e);
   }
 
@@ -300,19 +344,24 @@ const Battle = (function () {
     const host = cv.parentElement;
     if (!host || !host.clientWidth) return;
     const style = getComputedStyle(host);
-    const children = Array.from(host.children);
-    const siblingsH = children.filter(el => el !== cv).reduce((sum, el) => sum + el.getBoundingClientRect().height, 0);
     const paddingH = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
     const paddingW = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-    const gaps = (parseFloat(style.rowGap) || 0) * Math.max(0, children.length - 1);
     const availW = Math.max(120, host.clientWidth - paddingW - 2);
-    const availH = Math.max(90, host.clientHeight - paddingH - siblingsH - gaps - 2);
+    const availH = Math.max(1, host.clientHeight - paddingH - 2);
+    const pixelRatio = Math.min((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 2);
+    const signature = availW + ':' + availH + ':' + pixelRatio;
+    // 부모 작업 영역만 측정한다. 동일한 크기의 알림으로 캔버스를 다시 줄이지 않는다.
+    if (signature === fittedViewport) return;
+    fittedViewport = signature;
     // 정사각 타일 기준 크기
+    const previousTile = TILE;
     TILE = Math.max(24, Math.floor(Math.min(availW / COLS, availH / ROWS)));
+    camera.px *= TILE / previousTile;
+    camera.py *= TILE / previousTile;
     const bw = COLS * TILE, bh = ROWS * TILE;
     // Preserve square cells and geographic proportions at every viewport size.
     const sx = Math.min(availW / bw, availH / bh), sy = sx;
-    DPR = Math.min((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 2);
+    DPR = pixelRatio;
     cv.width = Math.round(bw * sx * DPR);
     cv.height = Math.round(bh * sy * DPR);
     cv.style.width = Math.round(bw * sx) + 'px';
@@ -322,6 +371,8 @@ const Battle = (function () {
   }
 
   function destroyUI() {
+    if (canvasObserver) canvasObserver.disconnect();
+    canvasObserver = null; navigation = null; fittedViewport = '';
     if (typeof window !== 'undefined' && window.removeEventListener) {
       window.removeEventListener('resize', fitCanvas);
       window.removeEventListener('orientationchange', fitCanvas);
@@ -561,9 +612,7 @@ const Battle = (function () {
         if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) return;
         const t = B.terrain[ny][nx];
         if (t === WATER) return;                 // 강·바다는 여울로만 건넌다
-        let cost = 1;
-        if (t === 2) cost = 2;
-        else if (t === 1 && u.branch === '기병') cost = 2;
+        const cost = CombatRules.moveCost(u.branch,t);
         const nd = cur.d + cost;
         if (nd > movMax) return;
         const key = ny * COLS + nx;
@@ -594,6 +643,7 @@ const Battle = (function () {
   // 돌격 착지점 — 직선으로 적을 뚫고 나간 자리
   function chargeOptions(u) {
     if (!u || u.branch !== '기병') return [];
+    if(B.terrain[u.y][u.x]!==0) return [];
     const movMax = BRANCHES['기병'].mov + ((FORMS[u.form] || {}).mov || 0);
     const range = Math.min(movMax, CHARGE_RANGE);   // 아무리 빨라도 세 칸까지만
     const out = [];
@@ -603,7 +653,7 @@ const Battle = (function () {
         const nx = u.x + dir[0] * step, ny = u.y + dir[1] * step;
         if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) break;
         const terrain = B.terrain[ny][nx];
-        if (terrain === WATER || terrain === 3) break; // 물·성은 돌격 경로와 착지점에서 제외한다 (빈 성·아군 성도 동일)
+        if (terrain !== 0) break; // 숲·산·성·물·여울에서는 대형을 유지한 돌격 불가
         if (!meleeReachable({x:nx-dir[0],y:ny-dir[1]},{x:nx,y:ny})) break;
         const occ = unitAt(nx, ny);
         if (occ) {
@@ -1117,7 +1167,6 @@ const Battle = (function () {
   function costField(u, tx, ty) {
     const N = COLS * ROWS, cost = new Array(N).fill(Infinity);
     if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return cost;
-    const stepCost = t => (t === 2 ? 2 : (t === 1 && u.branch === '기병' ? 2 : 1));
     cost[ty * COLS + tx] = 0;
     const done = new Array(N).fill(false);
     for (let it = 0; it < N; it++) {
@@ -1132,7 +1181,8 @@ const Battle = (function () {
         if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS || done[ny * COLS + nx]) return;
         const t = B.terrain[ny][nx];
         if (t === WATER) return;                     // 여울이 아니면 강을 건널 수 없다
-        const nd = cost[cur] + stepCost(t);
+        // 역방향 탐색이므로 현재 칸에 진입하는 비용을 더한다.
+        const nd = cost[cur] + CombatRules.moveCost(u.branch,B.terrain[cy][cx]);
         if (nd < cost[ny * COLS + nx]) cost[ny * COLS + nx] = nd;
       });
     }
@@ -1301,6 +1351,7 @@ const Battle = (function () {
     if (cmd === 'charge') {
       if (u.branch !== '기병') { bLog('돌격은 기병 부대만 할 수 있습니다.'); return; }
       if (u.moved) { bLog('돌격은 이동 전에만 할 수 있습니다.'); return; }
+      if (B.terrain[u.y][u.x]!==0) { bLog('돌격은 평지에서 출발해야 합니다. 숲·산·성·여울에서는 대형을 갖출 수 없습니다.'); return; }
       if (!chargeOptions(u).length) { bLog('뚫고 나갈 적진이 없습니다.'); return; }
       B.mode = 'charge'; renderPanel(); return;
     }
@@ -1355,9 +1406,7 @@ const Battle = (function () {
 
   function onClick(e) {
     if (!B || B.over || !cv) return;
-    const r = cv.getBoundingClientRect();
-    const x = Math.floor((e.clientX - r.left) / r.width * COLS);
-    const y = Math.floor((e.clientY - r.top) / r.height * ROWS);
+    const p = boardPoint(e), x = Math.floor(p.x), y = Math.floor(p.y);
     clickCell(x, y);
   }
 
@@ -1456,7 +1505,7 @@ const Battle = (function () {
     if (!B) return null;
     const actions = cellActions();
     return {
-      city: B.opts.city.name, round: B.round, maxRound: B.maxRound,
+      city: B.opts.city.name, siege:!!B.opts.siege, geography:{region:B.geo.region,site:B.geo.site,kind:B.geo.kind,tactics:B.geo.tactics}, round: B.round, maxRound: B.maxRound,
       playerSide: B.playerSide, side: B.side, auto: B.auto, busy: B.busy,
       over: B.over, winner: B.winner || null, mode: B.mode, strat: B.strat,
       supply: B.supply ? { atk:{...B.supply.atk}, def:{...B.supply.def} } : null,
@@ -1667,7 +1716,7 @@ const Battle = (function () {
         const occ = unitAt(x,y);
         if (occ && occ !== u && occ.side !== u.side) return;
         const t = B.terrain[y][x], next = y * COLS + x;
-        const nd = cost[cur] + (t === 2 || (t === 1 && u.branch === '기병') ? 2 : 1);
+        const nd = cost[cur] + CombatRules.moveCost(u.branch,t);
         if (nd < cost[next]) { cost[next] = nd; prev[next] = cur; }
       });
     }
@@ -2046,6 +2095,10 @@ const Battle = (function () {
   function draw() {
     if (!B || !ctx) return;
     const W = COLS * TILE, H = ROWS * TILE;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    const sx = cv.width / W, sy = cv.height / H;
+    ctx.setTransform(sx * camera.scale, 0, 0, sy * camera.scale, sx * camera.px, sy * camera.py);
     ctx.clearRect(0, 0, W, H);
     drawBackdrop(W,H);
     for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) if(B.terrain[y][x]===3) drawFort(x*TILE,y*TILE,fortOwner(x,y));
@@ -2857,7 +2910,7 @@ const Battle = (function () {
 
   return {
     start, act, setStrat, setForm, reinforce, retreatTo, clickCell, observation,
-    toggleBgm, toggleSfx, syncSound,
+    toggleBgm, toggleSfx, syncSound, zoomBy, zoomReset,
     reinforceDays: REINF_DAYS,
     get active() { return !!B && !B.over; },
     get state() { return B; }

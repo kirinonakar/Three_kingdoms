@@ -418,6 +418,8 @@ Battle.start({
   check(!!Bv, '일제공격: 시작 실패');
   if (Bv) {
     Bv.terrain[3] = Array(13).fill(0);
+    Bv.terrain[4] = Array(13).fill(0);
+    Bv.geo={...Bv.geo,rivers:[],lakes:[],edgeFords:[],crossings:[]};
     const mine = Bv.units.filter(u => u.side === 'atk');
     const a = mine[0], mate = mine[1];
     const d = Bv.units.find(u => u.name === '이각');

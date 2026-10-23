@@ -25,6 +25,13 @@ const CombatRules = (() => {
     return 1+defense/400+.13*fortified*fortified;
   }
   function counter(a,b) { return a==='기병'&&b==='궁병'?1.3:a==='궁병'&&b==='보병'||a==='보병'&&b==='기병'?1.2:1; }
+  function moveCost(branch, terrain) {
+    if(terrain===4) return Infinity;
+    if(terrain===5) return branch==='기병'?3:2;
+    if(terrain===2) return branch==='기병'?3:2;
+    if(terrain===1 && branch==='기병') return 2;
+    return 1;
+  }
   function bonuses(u, allies = [], nearby = allies) {
     const name=(u.officer||{}).name, names=new Set(allies.filter(a=>a.troops>=1000&&a.alive!==false).map(a=>(a.officer||{}).name));
     const out={atk:1,def:1,resist:talent(u).resist||0,labels:[]};
@@ -45,7 +52,7 @@ const CombatRules = (() => {
   }
   function damage(a,d,opt={}) {
     const ar=ratings(a,opt.alliesA,opt.nearbyA),dr=ratings(d,opt.alliesD,opt.nearbyD);
-    const terrain=[1,1.15,1.25,1.4,1,1][opt.terrain||0]||1;
+    const terrain=[1,1.15,1.25,1.4,1,.85][opt.terrain||0]||1;
     const defense=dr.defense*terrain*cityDefenseMultiplier(opt.cityDef);
     const raw=(ar.attack*counter(a.branch,d.branch)*.9-defense*.45)*34.5*(opt.random??1)*(opt.ranged?.85:1);
     return Math.max(1,Math.round(Math.max(90,raw)*strength(a)));
@@ -58,5 +65,5 @@ const CombatRules = (() => {
       (1+(o.zhi??50)/1000+(t.confuse||0)+(t.fire? .04:0));
   }
   function description(o) { const t=unique[o?.name];return t?t.label+': '+t.desc:''; }
-  return {strength,cityDefenseMultiplier,counter,damage,power,ratings,bonuses,talent,description,bonds,unique};
+  return {strength,cityDefenseMultiplier,counter,moveCost,damage,power,ratings,bonuses,talent,description,bonds,unique};
 })();

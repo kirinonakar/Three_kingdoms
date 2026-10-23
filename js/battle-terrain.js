@@ -77,6 +77,51 @@ const BattleTerrain = (function () {
     wet: { ground: '#47664f', light: '#698469', dark: '#304c3d', field: '#9a9e66', water: '#356d77' },
     gorge: { ground: '#4c6250', light: '#71816a', dark: '#344a3d', field: '#969263', water: '#366c75' }
   };
+  // 야전은 성 주변 약도가 아닌 외곽의 하안·고개·경작지를 확대한다. 북향은 유지한다.
+  const fieldSites = {
+    '무위':['회랑 사구','plain',-.6,.7], '천수':['위수 하곡','valley',.5,-.7],
+    '장안':['위수 둔치','plain',-.4,1.1], '낙양':['망산 남록','valley',.6,-.6],
+    '한중':['한수 산간 통로','valley',-.5,-.5], '상당':['태항산 고개','gorge',-1,.3],
+    '진양':['분하 도하장','river',.8,-.4], '업':['장하 북안','plain',.5,-1.1],
+    '남피':['하북 갈대밭','wetland',-.5,-.7], '북평':['연산 기슭','woodland',-.6,.7],
+    '평원':['황하 모래톱','river',.5,-1.2], '진류':['황하 남안 농경지','plain',-.7,1.2],
+    '복양':['황하 나루','river',-.6,-.7], '허창':['영수 과수원','woodland',.5,.5],
+    '완':['백수 분지 입구','valley',-.8,.6], '소패':['사수 들판','plain',-.8,.7],
+    '하비':['사수 합류 여울','river',-.7,-.5], '수춘':['회수 남안 구릉','valley',.6,.9],
+    '합비':['소호 연안 습지','wetland',-.8,-.6], '여남':['여수 밀밭','plain',.6,-.8],
+    '양양':['한수 하안 숲','woodland',.5,1], '강하':['합류부 도하장','river',-.7,-.5],
+    '강릉':['장강 북안 논길','wetland',.5,-1.1], '장사':['상강 대숲','woodland',.7,.5],
+    '건업':['종산 서쪽 숲길','woodland',-.6,.7], '오':['태호 동쪽 논두렁','wetland',.6,-.6],
+    '회계':['회계산 북쪽 고개','valley',-.5,.4], '성도':['민강 들판','plain',.7,-.5],
+    '강주':['가릉강 합류 협로','gorge',-.6,-.7], '영안':['삼협 산길','gorge',.6,-.6]
+  };
+  const fieldKinds = {
+    plain: '넓은 평지는 기병 기동에 유리 · 하천과 수림으로 측면을 보호',
+    river: '양안 여울이 진격로 · 도하 중 이동이 느리고 방어에 불리',
+    valley: '능선 사이로 진격로가 좁아짐 · 산지 방어와 평지 우회 활용',
+    gorge: '좁은 협로와 산지 · 기병보다 보병의 우회와 고지 방어가 중요',
+    woodland: '이어진 수림 · 숲 방어와 화계를 활용하고 기병 돌격은 평지에서',
+    wetland: '호안과 물길 사이 육지로 이동 · 여울을 확보하고 도하 부대를 엄호'
+  };
+  function fieldProfile(p, name, approach) {
+    const [site,kind,ox,oy]=fieldSites[name]||['외곽 들판','plain',.5,-.5];
+    const ax=approach&&Number.isFinite(approach.x)?Math.sign(approach.x)*.35:0;
+    const ay=approach&&Number.isFinite(approach.y)?Math.sign(approach.y)*.35:0;
+    const point=([x,y])=>[(x-6.5)*1.08+6.5+ox+ax,(y-4.5)*.78+4.5+oy+ay];
+    const extend=pts=>{
+      const out=pts.map(point);
+      for(const [i,j] of [[0,1],[out.length-1,out.length-2]]) {
+        const dx=out[i][0]-out[j][0],dy=out[i][1]-out[j][1],n=Math.hypot(dx,dy)||1;
+        out[i]=[out[i][0]+dx/n*4,out[i][1]+dy/n*4];
+      }
+      return out;
+    };
+    return {...p,site,kind,tactics:fieldKinds[kind],detail:site+' · '+p.detail,
+      woods:Math.min(.5,p.woods+(kind==='woodland'?.16:kind==='plain'?-.03:.05)),
+      rivers:(p.rivers||[]).map(r=>({...r,w:r.w*(kind==='river'?1.08:.85),pts:extend(r.pts)})),
+      lakes:(p.lakes||[]).map(l=>({...l,pts:l.pts.map(point)})),
+      ridges:(p.ridges||[]).map(r=>({...r,w:r.w*(kind==='gorge'?1.1:.85),pts:extend(r.pts)}))};
+  }
   // 같은 기후권도 지표·식생·건축 재료를 따로 지정한다. 이름별 seed는 세부 배치만 바꾼다.
   const scenery = {
     '무위':['dunes','poplar','earth','#c1a064','#6d563b'], '천수':['terraces','pine','earth','#bca276','#71513d'],
@@ -245,9 +290,11 @@ const BattleTerrain = (function () {
       return {river:crossing.river,axis:crossing.axis,cells:crossing.cells,from:crossing.from,to:crossing.to};
     });
   }
-  function build(city, siege) {
-    const name=city&&city.name||'중원', p=profiles[name]||{region:'중원 평야',detail:'완만한 평지와 수림',theme:'plain',woods:.18};
-    const seed=Array.from(name).reduce((s,c)=>s+c.charCodeAt(0),0);
+  function build(city, siege, approach) {
+    const name=city&&city.name||'중원', regional=profiles[name]||{region:'중원 평야',detail:'완만한 평지와 수림',theme:'plain',woods:.18};
+    const p=siege?regional:fieldProfile(regional,name,approach);
+    const direction=approach?(Math.sign(approach.x||0)+1)*101+(Math.sign(approach.y||0)+1)*503:0;
+    const seed=Array.from(name).reduce((s,c)=>s+c.charCodeAt(0),0)+(siege?0:7919+direction);
     const rivers=(p.rivers||[]).map((r,i)=>banks(r,seed+i));
     const lakes=(p.lakes||[]).map(l=>({name:l.name,polygon:smooth([l.pts[l.pts.length-1],...l.pts,l.pts[0],l.pts[1]]).slice(12,(l.pts.length+1)*12)}));
     const ridges=(p.ridges||[]).map(r=>({...r,pts:smooth(r.pts)}));
@@ -309,7 +356,7 @@ const BattleTerrain = (function () {
         fields.push({x:cx,y:cy,angle,pts,seed:i});
       }
     }
-    return {name,region:p.region,detail:p.detail,theme:p.theme,palette:palettes[p.theme],style,scale,fields,seed,terrain,elevation,rivers,lakes,ridges,crossings,edgeFords,
+    return {name,region:p.region,detail:p.detail,site:p.site||'성곽 주변',kind:p.kind||'siege',tactics:p.tactics||'세 성의 깃발을 확보하여 함락',theme:p.theme,palette:palettes[p.theme],style,scale,fields,seed,terrain,elevation,rivers,lakes,ridges,crossings,edgeFords,
       labels:[p.region,...rivers.map(r=>r.name),...lakes.map(l=>l.name),...ridges.map(r=>r.name)]};
   }
   return { build, profiles, inside, waterBetween };

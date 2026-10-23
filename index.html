@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>삼국지 : 천하통일</title>
 <style>
 :root{
@@ -27,7 +27,7 @@ body{
     var(--bg0);
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
 }
-#app{display:flex;flex-direction:column;height:100vh;position:relative}
+#app{display:flex;flex-direction:column;height:100vh;height:100dvh;position:relative}
 #app::after{
   content:"";position:absolute;inset:0;pointer-events:none;opacity:.3;z-index:0;
   background-image:radial-gradient(rgba(255,255,255,.035) 1px, transparent 1px);
@@ -335,6 +335,8 @@ p .nums{display:inline-flex;gap:2px 10px}
 .frow .pf-photo{margin:-2px 2px -2px -2px}
 .row .name{display:flex;align-items:center;gap:7px}
 table .pf{vertical-align:middle;margin-right:6px}
+.officer-table-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.officer-table .officer-name,.officer-table .officer-city,.officer-table th{white-space:nowrap;writing-mode:horizontal-tb;word-break:normal}
 .ut-who{display:inline-flex;align-items:center;gap:8px}
 table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
 th,td{padding:6px 8px;text-align:left;border-bottom:1px solid #ffffff0a}
@@ -428,8 +430,16 @@ input[type=checkbox]{accent-color:var(--gold2)}
 #battleCanvas{
   position:relative;z-index:1;display:block;border-radius:4px;border:1px solid #ffffff25;
   box-shadow:0 26px 70px #000d, 0 0 0 1px #e6c37c14, inset 0 0 70px #0009;
-  max-width:100%;max-height:100%;cursor:pointer;touch-action:manipulation;
+  max-width:100%;max-height:100%;cursor:grab;touch-action:none;
 }
+.battle-viewport{position:relative;flex:1 1 0;min-height:0;width:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.battle-map>.battle-viewport{flex-shrink:1}
+.battle-zoom{position:absolute;z-index:2;right:12px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:6px;padding:4px;background:#0b1510e8;border:1px solid var(--line2);border-radius:10px}
+.battle-zoom button{width:34px;height:34px;padding:0;font-size:17px}
+.battle-zoom span{font-size:11px;min-width:40px;color:var(--gold);font-variant-numeric:tabular-nums}
+.gesture-hint{flex:none;font-size:11px;color:var(--muted);text-align:center}
+.map-gesture-hint{position:absolute;bottom:5px;left:8px;right:8px;pointer-events:none}
+.mobile-nav{display:none}
 .battle-geography{position:relative;z-index:1;width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 6px;color:#c6c8a7}
 .battle-geography b{display:block;font-family:var(--serif);font-size:15px;color:#e1c98e;letter-spacing:.08em}
 .battle-geography span{font-size:11px;color:#9da994;line-height:1.7}
@@ -439,7 +449,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
 .terrain-legend i{width:9px;height:9px;border:1px solid #ffffff36;background:#667d54}
 .terrain-legend .forest{background:#234c35}.terrain-legend .mountain{background:#8b8970;clip-path:polygon(50% 0,100% 100%,0 100%)}
 .terrain-legend .fort{background:#b29869}.terrain-legend .water{background:#39727c}.terrain-legend .ford{background:radial-gradient(ellipse at 35% 65%,#c0b993 0 20%,transparent 25%),radial-gradient(ellipse at 75% 35%,#b3b48c 0 18%,transparent 23%),#7e9f91}
-.map-hint{position:relative;z-index:1;min-height:16px;font-size:10.5px;color:var(--muted);text-align:center;letter-spacing:.03em;pointer-events:none}
+.map-hint{position:relative;z-index:1;width:100%;height:18px;min-height:18px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10.5px;color:var(--muted);text-align:center;letter-spacing:.03em;pointer-events:none}
 .battle-side{width:352px;flex:none;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;border-left:1px solid var(--line);background:linear-gradient(180deg,#121b16,#0b110d)}
 .bscore{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .scard{background:#0f1712;border:1px solid #ffffff10;border-left:3px solid var(--c,#888);border-radius:9px;padding:6px 10px;display:flex;flex-direction:column;line-height:1.25}
@@ -536,10 +546,101 @@ input[type=checkbox]{accent-color:var(--gold2)}
   #logWrap{min-height:132px}
   #cityDirectory>div{max-height:20vh}
 }
+/* 작은 화면에서는 지도와 명령에 각각 온전한 작업 공간을 준다. */
+@media (max-width:940px){
+  #topbar{flex:none;display:grid;grid-template-columns:auto minmax(0,1fr);padding:8px max(10px,env(safe-area-inset-right)) 8px max(10px,env(safe-area-inset-left));gap:8px}
+  #topbar>.sp{display:none}
+  #topbar .seal{width:28px;height:32px;font-size:18px}
+  .brand{gap:6px}
+  .brand-t b{font-size:13px;letter-spacing:0}
+  #topbar>.stats{flex-wrap:nowrap;justify-content:flex-end;overflow:auto;min-width:0}
+  .stat{padding:1px 7px;flex:none}
+  .stat .k{font-size:9px;letter-spacing:0}
+  .stat b{font-size:12px}
+  .tb-actions{grid-column:1/-1;width:100%;min-width:0;flex-wrap:nowrap;overflow-x:auto;gap:6px;margin:0;padding-bottom:2px;scrollbar-width:thin}
+  .tb-actions>*{flex:none}
+  .tb-actions button{min-height:44px;padding:7px 10px}
+  .tb-actions button.icoBtn{width:44px}
+  .tb-actions #btnHelp{display:block}
+  #btnEndTurn{position:sticky;right:0;order:-2;margin-right:0;z-index:2}
+  #btnAutoPlay:not([hidden]){position:sticky;left:0;order:-3;z-index:3;background:#473219;border-color:var(--gold2)}
+  #app>main{overflow:hidden;min-height:0}
+  #mapWrap{flex:1;min-height:0;padding:8px;overflow:hidden}
+  #mapCanvas{width:auto;height:auto;max-width:100%;max-height:100%;border-radius:10px}
+  #mapTools{right:12px;top:12px;transform:none;gap:8px}
+  #mapTools button{width:44px;height:44px}
+  #side{display:none;flex:1;min-height:0;height:auto;overflow:hidden}
+  #cityDirectory{flex:none}
+  #cityPanel{flex:1;min-height:0;overflow:auto;padding:12px;overscroll-behavior:contain}
+  #logWrap{display:none;flex:1;min-height:0}
+  #app[data-mobile-panel="city"] #mapWrap,#app[data-mobile-panel="log"] #mapWrap{display:none}
+  #app[data-mobile-panel="city"] #side,#app[data-mobile-panel="log"] #side{display:flex}
+  #app[data-mobile-panel="log"] #cityPanel,#app[data-mobile-panel="log"] #cityDirectory{display:none}
+  #app[data-mobile-panel="log"] #logWrap{display:flex}
+  .mobile-nav{flex:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:8px max(10px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));border-top:1px solid var(--line2);background:#101a14}
+  .mobile-nav button{min-height:46px;font-size:13px}
+  .mobile-nav button[aria-pressed="true"]{color:#ffe2a4;background:#3b301b;border-color:var(--gold2)}
+  body.title .mobile-nav{display:none}
+  body.title #topbar{display:flex}
+  .cmd-dock button.cmd{min-height:52px;font-size:12px}
+  #cityPanel .otag,#cityPanel .nb{min-height:36px;padding:6px 9px;font-size:12px}
+  button.mycity{min-height:44px}
+  .text-board summary{min-height:44px;display:flex;align-items:center}
+  .text-board button{min-height:44px}
+  #mapHint{width:calc(100% - 24px);bottom:12px;gap:6px}
+  #mapHint button{min-height:44px}
+  .modal-bg{padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))}
+  .modal-bg.pick-preview{--pick-top:max(8px,env(safe-area-inset-top))}
+  .modal,.modal-bg.pick-preview .modal{width:100%;max-width:860px;max-height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);padding:18px 14px 14px;overscroll-behavior:contain}
+  .modal h2,.modal h3{padding-right:32px}
+  .mclose{width:44px;height:44px;top:6px;right:6px}
+  .modal button,.modal [role="button"]{min-height:44px}
+  .modal .foot{bottom:-14px;flex-wrap:wrap;background:#121a15;padding:10px 0 2px;z-index:3}
+  .modal .foot button{flex:1}
+  input[type=number],select{font-size:16px;min-height:44px;max-width:100%}
+  .modal table{display:block;overflow-x:auto;max-width:100%}
+  .modal .officer-table{display:table;min-width:640px;max-width:none}
+  .frow{flex-wrap:wrap;gap:6px 10px}
+  .frow .muted{flex:1 1 190px;min-width:0;font-size:12px}
+  .frow .right{font-size:11px}
+  .battle-bg{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);height:100dvh}
+  .battle-head{height:52px;flex-basis:52px;padding:4px 8px}
+  .bh-sound button{width:44px;height:44px}
+  .battle-map{flex:1 1 0;min-height:0;padding:6px;gap:4px;overflow:hidden}
+  .battle-geography{gap:6px;padding:0 4px}
+  .battle-geography b{font-size:12px;letter-spacing:0}
+  .battle-geography span{display:none}
+  .battle-geography .north{display:block;font-size:11px}
+  .battle-zoom{right:8px;padding:3px}
+  .battle-zoom button{width:44px;height:44px}
+  .battle-side{flex:0 0 43%;max-height:none;min-height:0;padding:8px;gap:6px;overscroll-behavior:contain}
+  #bUnit{height:auto;min-height:0;max-height:148px;flex:none;padding:8px}
+  #bUnit .hints{min-height:0}
+  #bActs{flex:none;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+  #bActs button{min-height:48px;font-size:12px}
+  #bLog{flex:none;min-height:70px;max-height:110px}
+  .battle-foot{position:sticky;bottom:-8px;z-index:4;flex:none;background:#0b110d;padding:6px 0 8px;margin-top:0;order:-1}
+  .battle-foot button{min-height:44px;flex:1 1 0;padding:6px;font-size:12px}
+  .battle-directory>div{max-height:18dvh}
+  .gesture-hint{font-size:10px}
+  .terrain-legend{display:none}
+}
+@media (max-width:540px){
+  #topbar>.stats .stat:first-child,#topbar>.stats .stat:last-child{display:none}
+  .cmd-dock .cmds.c5{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:940px) and (max-height:500px) and (orientation:landscape){
+  .battle-body{flex-direction:row}
+  .battle-map{width:auto}
+  .battle-side{width:300px;flex:0 0 300px;border-top:0;border-left:1px solid var(--line)}
+  .battle-directory{display:none}
+  .mobile-nav{padding-top:4px;padding-bottom:max(4px,env(safe-area-inset-bottom))}
+  .mobile-nav button{min-height:40px}
+}
 </style>
 </head>
 <body>
-<div id="app">
+<div id="app" data-mobile-panel="map">
   <header id="topbar">
     <div class="brand">
       <span class="seal" aria-hidden="true">三</span>
@@ -579,6 +680,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
         <button type="button" onclick="Game.zoomReset()" title="초기 배율 (0)" aria-label="초기 배율">⟲</button>
         <span id="zoomLabel">×1.00</span>
       </div>
+      <div class="map-gesture-hint gesture-hint">두 손가락으로 확대·축소 · 드래그로 이동 · 도시를 눌러 명령</div>
       <div id="mapHint" role="group" aria-label="지도 목적지 선택"></div>
     </div>
     <aside id="side">
@@ -593,6 +695,11 @@ input[type=checkbox]{accent-color:var(--gold2)}
       </div>
     </aside>
   </main>
+  <nav class="mobile-nav" aria-label="게임 화면">
+    <button id="mobileTab-map" type="button" aria-pressed="true" onclick="Game.mobilePanel('map')">지도</button>
+    <button id="mobileTab-city" type="button" aria-pressed="false" onclick="Game.mobilePanel('city')">도시 · 명령</button>
+    <button id="mobileTab-log" type="button" aria-pressed="false" onclick="Game.mobilePanel('log')">전황 기록</button>
+  </nav>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="modalRoot"></div>
