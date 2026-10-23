@@ -226,12 +226,12 @@ const Battle = (function () {
         '<div class="battle-body">' +
           '<div class="battle-map">' +
             '<div class="battle-geography"><div><b>' + B.geo.region + ' · '+B.geo.site+'</b><span>' + (B.opts.siege?B.geo.detail:B.geo.tactics) + '</span></div><span class="north">↑ 북</span></div>' +
-            '<div class="battle-viewport" id="bViewport"><canvas id="battleCanvas" aria-label="' + B.opts.city.name + ' 전술 전장" width="' + (COLS * TILE) + '" height="' + (ROWS * TILE) + '"></canvas>' +
-            '<div class="battle-zoom" role="group" aria-label="전장 배율"><button type="button" onclick="Battle.zoomBy(1.25)" aria-label="전장 확대">＋</button><button type="button" onclick="Battle.zoomBy(.8)" aria-label="전장 축소">－</button><button type="button" onclick="Battle.zoomReset()" aria-label="전장 전체 보기">⟲</button><span id="bZoomLabel">×1.00</span></div></div>' +
+            '<div class="battle-viewport" id="bViewport"><canvas id="battleCanvas" aria-label="' + B.opts.city.name + ' 전술 전장" width="' + (COLS * TILE) + '" height="' + (ROWS * TILE) + '"></canvas></div>' +
             '<div class="terrain-legend"><span><i class="land"></i>평지</span><span><i class="forest"></i>숲 +15%</span><span><i class="mountain"></i>산 +25%</span>' + (B.opts.siege?'<span><i class="fort"></i>성 +40%</span>':'') + '<span><i class="water"></i>물 · 진입 불가</span><span><i class="ford"></i>여울 · 방어 -15% · 이동 2~3</span></div>' +
             '<div class="map-hint" id="bTerrainInfo"></div>' +
-            '<div class="gesture-hint">두 손가락으로 확대·축소 · 드래그로 이동 · 부대를 눌러 선택</div>' +
             '<details class="text-board battle-directory" id="bDirectory"><summary>전장 목록 · 좌표로 조작</summary><div id="bTextBoard"></div></details>' +
+            '<div class="battle-map-footer"><div class="gesture-hint" title="두 손가락으로 확대·축소 · 드래그로 이동 · 부대를 눌러 선택">두 손가락으로 확대·축소 · 드래그로 이동 · 부대를 눌러 선택</div>' +
+            '<div class="battle-zoom" role="group" aria-label="전장 배율"><button type="button" onclick="Battle.zoomBy(1.25)" aria-label="전장 확대">＋</button><button type="button" onclick="Battle.zoomBy(.8)" aria-label="전장 축소">－</button><button type="button" onclick="Battle.zoomReset()" aria-label="전장 전체 보기">⟲</button><span id="bZoomLabel">×1.00</span></div></div>' +
           '</div>' +
           '<div class="battle-side">' +
             '<div id="bScore" class="bscore"></div>' +

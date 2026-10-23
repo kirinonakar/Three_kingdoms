@@ -99,7 +99,8 @@ button.icoBtn.off{color:#7d8f81;opacity:.5}
 
 /* ── 본문 ───────────────────────────────── */
 main{flex:1;display:flex;min-height:0}
-#mapWrap{position:relative;flex:1;display:flex;align-items:center;justify-content:center;padding:14px;min-width:0}
+#mapWrap{position:relative;flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px;min-width:0;min-height:0}
+#mapViewport{position:relative;flex:1;min-height:0;width:100%;display:flex;align-items:center;justify-content:center}
 #mapWrap::before{
   content:"";position:absolute;inset:7% 6%;pointer-events:none;z-index:0;
   background:radial-gradient(60% 60% at 50% 45%,#e6c37c16,transparent 72%);
@@ -107,7 +108,7 @@ main{flex:1;display:flex;min-height:0}
 }
 #mapCanvas{
   position:relative;z-index:1;
-  width:100%;max-width:1240px;max-height:100%;aspect-ratio:1200/1000;
+  width:auto;height:auto;max-width:min(100%,1240px);max-height:100%;aspect-ratio:1200/1000;
   border:1px solid var(--line2);border-radius:14px;background:#0a110e;
   cursor:grab;touch-action:none;
   box-shadow:0 26px 70px #000d, 0 0 0 1px #e6c37c1a, inset 0 0 0 1px #ffffff0a;
@@ -117,8 +118,8 @@ main{flex:1;display:flex;min-height:0}
 #attackIntro[hidden]{display:none}
 #attackIntro.automated{pointer-events:none;cursor:default}
 #mapTools{
-  position:absolute;right:22px;top:50%;transform:translateY(-50%);
-  display:flex;flex-direction:column;gap:6px;align-items:center;z-index:2;
+  position:relative;align-self:flex-end;flex:none;
+  display:flex;gap:6px;align-items:center;z-index:2;
 }
 #mapTools button{
   width:34px;height:34px;padding:0;border-radius:9px;font-size:15px;line-height:1;
@@ -434,11 +435,14 @@ input[type=checkbox]{accent-color:var(--gold2)}
 }
 .battle-viewport{position:relative;flex:1 1 0;min-height:0;width:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .battle-map>.battle-viewport{flex-shrink:1}
-.battle-zoom{position:absolute;z-index:2;right:12px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:6px;padding:4px;background:#0b1510e8;border:1px solid var(--line2);border-radius:10px}
+.battle-zoom{position:relative;z-index:2;align-self:flex-end;display:flex;align-items:center;gap:6px;padding:4px;background:#0b1510e8;border:1px solid var(--line2);border-radius:10px}
 .battle-zoom button{width:34px;height:34px;padding:0;font-size:17px}
 .battle-zoom span{font-size:11px;min-width:40px;color:var(--gold);font-variant-numeric:tabular-nums}
 .gesture-hint{flex:none;font-size:11px;color:var(--muted);text-align:center}
-.map-gesture-hint{position:absolute;bottom:5px;left:8px;right:8px;pointer-events:none}
+.map-gesture-hint{position:relative;pointer-events:none}
+.map-footer,.battle-map-footer{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;width:100%;min-width:0}
+.map-footer>.gesture-hint,.battle-map-footer>.gesture-hint{flex:1;min-width:0;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.battle-map-footer>.battle-zoom{flex:none}
 .mobile-nav{display:none}
 .battle-geography{position:relative;z-index:1;width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 6px;color:#c6c8a7}
 .battle-geography b{display:block;font-family:var(--serif);font-size:15px;color:#e1c98e;letter-spacing:.08em}
@@ -567,7 +571,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
   #app>main{overflow:hidden;min-height:0}
   #mapWrap{flex:1;min-height:0;padding:8px;overflow:hidden}
   #mapCanvas{width:auto;height:auto;max-width:100%;max-height:100%;border-radius:10px}
-  #mapTools{right:12px;top:12px;transform:none;gap:8px}
+  #mapTools{gap:8px}
   #mapTools button{width:44px;height:44px}
   #side{display:none;flex:1;min-height:0;height:auto;overflow:hidden}
   #cityDirectory{flex:none}
@@ -611,7 +615,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
   .battle-geography b{font-size:12px;letter-spacing:0}
   .battle-geography span{display:none}
   .battle-geography .north{display:block;font-size:11px}
-  .battle-zoom{right:8px;padding:3px}
+  .battle-zoom{padding:3px}
   .battle-zoom button{width:44px;height:44px}
   .battle-side{flex:0 0 43%;max-height:none;min-height:0;padding:8px;gap:6px;overscroll-behavior:contain}
   #bUnit{height:auto;min-height:0;max-height:148px;flex:none;padding:8px}
@@ -673,15 +677,19 @@ input[type=checkbox]{accent-color:var(--gold2)}
   </header>
   <main>
     <div id="mapWrap">
-      <canvas id="mapCanvas" width="1200" height="1000" aria-label="중원 지도"></canvas>
-      <div id="mapTools">
+      <div id="mapViewport">
+        <canvas id="mapCanvas" width="1200" height="1000" aria-label="중원 지도"></canvas>
+        <div id="mapHint" role="group" aria-label="지도 목적지 선택"></div>
+      </div>
+      <div class="map-footer">
+      <div class="map-gesture-hint gesture-hint" title="두 손가락으로 확대·축소 · 드래그로 이동 · 도시를 눌러 명령">두 손가락으로 확대·축소 · 드래그로 이동 · 도시를 눌러 명령</div>
+      <div id="mapTools" role="group" aria-label="지도 배율">
         <button type="button" onclick="Game.zoomBy(1.12)" title="확대 (＋)" aria-label="확대">＋</button>
         <button type="button" onclick="Game.zoomBy(0.89)" title="축소 (－)" aria-label="축소">－</button>
         <button type="button" onclick="Game.zoomReset()" title="초기 배율 (0)" aria-label="초기 배율">⟲</button>
         <span id="zoomLabel">×1.00</span>
       </div>
-      <div class="map-gesture-hint gesture-hint">두 손가락으로 확대·축소 · 드래그로 이동 · 도시를 눌러 명령</div>
-      <div id="mapHint" role="group" aria-label="지도 목적지 선택"></div>
+      </div>
     </div>
     <aside id="side">
       <details class="text-board" id="cityDirectory">
