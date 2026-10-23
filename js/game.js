@@ -151,7 +151,31 @@ const PORTRAITS = {
   '장위': 'assets/portraits/zhangwei.jpg',
   '한수': 'assets/portraits/hansui.jpg',
   '곽사': 'assets/portraits/guosi.jpg',
-  '채모': 'assets/portraits/caimao.jpg'
+  '채모': 'assets/portraits/caimao.jpg',
+  '만총': 'assets/portraits/manchong.jpg',
+  '모개': 'assets/portraits/maojie.jpg',
+  '여건': 'assets/portraits/lvqian.jpg',
+  '임준': 'assets/portraits/renjun.jpg',
+  '주치': 'assets/portraits/zhouzhi.jpg',
+  '손정': 'assets/portraits/sunjing.jpg',
+  '유반': 'assets/portraits/liupan.jpg',
+  '왕위': 'assets/portraits/wangwei.jpg',
+  '양임': 'assets/portraits/yangren.jpg',
+  '염포': 'assets/portraits/yanpu.jpg',
+  '번조': 'assets/portraits/fanchou.jpg',
+  '괴량': 'assets/portraits/kuailiang.jpg',
+  '괴월': 'assets/portraits/kuaiyue.jpg',
+  '이적': 'assets/portraits/yiji.jpg',
+  '황조': 'assets/portraits/huangzu.jpg',
+  '문빙': 'assets/portraits/wenpin.jpg',
+  '한현': 'assets/portraits/hanxuan.jpg',
+  '기령': 'assets/portraits/jiling.jpg',
+  '장훈': 'assets/portraits/zhangxun.jpg',
+  '양홍': 'assets/portraits/yanghong.jpg',
+  '손향': 'assets/portraits/sunxiang.jpg',
+  '교유': 'assets/portraits/qiaorui.jpg',
+  '진란': 'assets/portraits/chenlan.jpg',
+  '고람': 'assets/portraits/gaolan.jpg'
 };
 function portraitHtml(name, size) {
   const sz = 'pf s' + (size || 22);
