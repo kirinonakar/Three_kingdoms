@@ -11,6 +11,13 @@
 
 > `file://` 로 열어도 동작합니다. 인터넷/서버 불필요.
 
+## 웹 배포 (GitHub Pages)
+
+- 웹 실행 주소: https://kirinonakar.github.io/Three_kingdoms/
+- `main` 브랜치에 푸시하면 **Deploy GitHub Pages** Actions가 `npm test`를 실행하고, 통과한 버전을 자동 배포합니다. Actions 탭에서 **Run workflow**로 `main`을 수동 배포할 수도 있습니다.
+- 최초 설정은 저장소 **Settings → Pages → Build and deployment → Source → GitHub Actions**입니다. 비공개 저장소의 Pages는 지원되는 GitHub 유료 플랜이 필요합니다.
+- 배포에는 `index.html`, `js/`, `assets/`, `AUDIO_CREDITS.md`만 포함됩니다. 빌드 패키지 설치나 별도 배포 토큰은 필요 없습니다.
+
 ## AI 에이전트 플레이
 
 도시 목록과 좌표별 전장 표로 캔버스 좌표 추측 없이 조작할 수 있습니다.
