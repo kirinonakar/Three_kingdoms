@@ -315,6 +315,24 @@ p .nums{display:inline-flex;gap:2px 10px}
 .nums .kv{white-space:nowrap}
 .nums b{color:#e9e2cf;font-weight:600}
 .row .right{margin-left:auto;font-size:12px;color:var(--gold);white-space:nowrap}
+/* ── 무장 초상화 ─────────────────────────────────── */
+.pf{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;overflow:hidden;border-radius:50%;background:radial-gradient(circle at 35% 30%,#3b2d17,#12100a);border:1px solid #a87b3c66;color:var(--gold);font-family:var(--serif);font-weight:700;line-height:1;box-shadow:inset 0 1px 0 #ffffff1a}
+.pf i{font-style:normal}
+/* 초상화 호버 툴팁 */
+.pf-tip{position:fixed;left:0;top:0;z-index:200;pointer-events:none;padding:6px;border-radius:12px;background:linear-gradient(180deg,#1a241d,#0c120f);border:1px solid var(--gold3);box-shadow:0 18px 40px #000c,0 0 0 1px #e6c37c26 inset;animation:pfTipIn .12s ease-out}
+.pf-tip[hidden]{display:none}
+.pf-tip img{display:block;width:240px;height:240px;object-fit:cover;border-radius:8px}
+.pf-tip span{display:block;margin-top:5px;font-family:var(--serif);font-size:12px;letter-spacing:.08em;color:var(--gold);text-align:center}
+@keyframes pfTipIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.pf.s16{width:18px;height:18px;font-size:9px}
+.pf.s22{width:24px;height:24px;font-size:10.5px}
+.pf.s34{width:36px;height:36px;font-size:14px}
+.pf.s40{width:42px;height:42px;font-size:16px;border-radius:10px}
+.pf.face{border-color:var(--gold2);box-shadow:0 0 0 1px #e6c37c26 inset,0 2px 8px #0007}
+.otag .pf{margin:-2px 0 -2px -3px}
+.row .name{display:flex;align-items:center;gap:7px}
+table .pf{vertical-align:middle;margin-right:6px}
+.ut-who{display:inline-flex;align-items:center;gap:8px}
 table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
 th,td{padding:6px 8px;text-align:left;border-bottom:1px solid #ffffff0a}
 th{position:sticky;top:0;background:#1b261f;color:var(--gold);font-weight:600;letter-spacing:.06em;z-index:1}
@@ -448,7 +466,11 @@ input[type=checkbox]{accent-color:var(--gold2)}
 .battle-foot{display:flex;gap:6px;margin-top:auto;flex-wrap:wrap}
 .battle-foot button{flex:1 1 64px;padding:7px 8px;font-size:12.5px}
 .battle-unit-tooltip{position:fixed;z-index:140;width:292px;max-width:calc(100vw - 24px);padding:13px 15px;border:1px solid #a58a54;border-radius:9px;background:linear-gradient(145deg,#1d2b22f7,#0b1510fa);box-shadow:0 10px 32px #000a;color:#e7e4d3;font-size:12px;line-height:1.6;pointer-events:none}
-.battle-unit-tooltip[hidden]{display:none}.ut-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.ut-head b{font-family:var(--serif);font-size:18px;color:#ffe0a0}.ut-head span,.ut-sub{color:#aabcab;font-size:11px}.ut-sub{margin:3px 0 9px}.ut-grid{display:grid;grid-template-columns:1fr auto;gap:3px 14px;border-top:1px solid #ffffff17;padding-top:8px}.ut-grid span{color:#adbba8}.ut-grid b{font-variant-numeric:tabular-nums}.battle-unit-tooltip p{margin:6px 0 0;font-size:11px;color:#b9c5af}.battle-unit-tooltip .ut-skill{color:#e6c37c}
+.battle-unit-tooltip[hidden]{display:none}.ut-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.ut-face{flex:none;line-height:0;border-radius:10px;overflow:hidden;border:1px solid #8a6a33;box-shadow:0 6px 18px #000a;background:#12100a}
+.ut-face img{display:block;width:60px;height:60px;object-fit:cover}
+.ut-army{white-space:nowrap}
+.ut-head.face-head{justify-content:flex-start}.ut-head.face-head .ut-who{gap:0}.ut-head.face-head .ut-army{margin-left:auto}.ut-head b{font-family:var(--serif);font-size:18px;color:#ffe0a0}.ut-head span,.ut-sub{color:#aabcab;font-size:11px}.ut-sub{margin:3px 0 9px}.ut-grid{display:grid;grid-template-columns:1fr auto;gap:3px 14px;border-top:1px solid #ffffff17;padding-top:8px}.ut-grid span{color:#adbba8}.ut-grid b{font-variant-numeric:tabular-nums}.battle-unit-tooltip p{margin:6px 0 0;font-size:11px;color:#b9c5af}.battle-unit-tooltip .ut-skill{color:#e6c37c}
 #scenarioSelect{width:100%;padding:10px 12px;border:1px solid #8a764a;border-radius:7px;background:#17251d;color:#f2ddb1;font:600 16px "Malgun Gothic",sans-serif}
 .scenario-label{display:block;color:#ceb988;font-size:12px;margin:10px 0 7px}.scenario-desc{line-height:1.65;min-height:2.5em;margin:10px 0 18px}
 
@@ -571,6 +593,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="modalRoot"></div>
+<div id="pfTip" class="pf-tip" hidden></div>
 <div id="attackIntro" role="status" aria-live="polite" hidden></div>
 <div id="battleRoot"></div>
 <script src="js/sword-samples.js"></script>

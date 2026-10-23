@@ -15,6 +15,89 @@ const ri = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
 const cl = (v, a, b) => Math.max(a, Math.min(b, v));
 const commas = n => Math.round(n).toLocaleString('ko-KR');
 
+
+/* ── 무장 초상화 ───────────────────────────────────
+   배지에는 성(姓) 첫 글자를 기본으로 보여 준다.
+   assets/portraits/ 에 얼굴 그림이 있는 무장은 마우스를 올리면
+   큰 초상화 툴팁(#pfTip)이 커서를 따라 나타난다. */
+const PORTRAITS = {
+  '조조': 'assets/portraits/caocao.png',
+  '여포': 'assets/portraits/lvbu.png'
+};
+function portraitHtml(name, size) {
+  const sz = 'pf s' + (size || 22);
+  const initial = name ? name.charAt(0) : '?';
+  const src = PORTRAITS[name];
+  const head = '<span class="' + sz + (src ? ' face' : '') + '" data-name="' + name + '"' +
+    (src ? ' data-portrait="' + src + '"' : '') + ' aria-hidden="true">';
+  return head + '<i>' + initial + '</i></span>';
+}
+/* 초상화 원본 그림 — 전장 부대 툴팁처럼 사진을 직접 보여 줄 때 쓴다 (없으면 빈 문자열) */
+function portraitFace(name) {
+  const src = PORTRAITS[name];
+  return src ? '<span class="ut-face"><img src="' + src + '" alt="' + name + '"></span>' : '';
+}
+/* 배지뿐 아니라 무장 태그·표의 행 전체를 호버 대상으로 만드는 속성.
+   초상화가 없는 무장은 빈 문자열이라 아무 일도 일어나지 않는다. */
+function portraitAttr(name) {
+  const src = PORTRAITS[name];
+  return src ? ' data-portrait="' + src + '" data-name="' + name + '"' : '';
+}
+/* 초상화 툴팁 — [data-portrait] 를 가진 요소(배지·표 행·태그) 위에서 뜬다 */
+const PF_TIP_SEL = '[data-portrait]';
+/* 이름이 적힌 카드(.otag·.row·표 행·전장 툴팁) 안에 초상화 배지가 있으면
+   그 카드의 어디를 가리켜도 같은 초상화를 툴팁으로 띄운다. */
+const PF_CARD_SEL = '.otag, .row, tr, .ut-who, .ut-head, .frow, .ub';
+function portraitHost(target) {
+  if (!target || !target.closest) return null;
+  const own = target.closest(PF_TIP_SEL);
+  if (own) return own;
+  const card = target.closest(PF_CARD_SEL);
+  return card && card.querySelector ? card.querySelector(PF_TIP_SEL) : null;
+}
+function showPortraitTip(el, x, y) {
+  const tip = $('pfTip'); if (!tip) return;
+  const src = el.getAttribute('data-portrait'); if (!src) return;
+  const name = el.getAttribute('data-name') || '';
+  if (tip.getAttribute('data-src') !== src) {
+    tip.innerHTML = '<img src="' + src + '" alt="' + name + '"><span>' + name + '</span>';
+    tip.setAttribute('data-src', src);       // 같은 그림은 다시 만들지 않는다
+  }
+  tip.hidden = false;
+  movePortraitTip(x, y);
+}
+function movePortraitTip(x, y) {
+  const tip = $('pfTip'); if (!tip || tip.hidden) return;
+  const r = tip.getBoundingClientRect();
+  const W = window.innerWidth, H = window.innerHeight;
+  let left = x + 18, top = y + 18;
+  if (left + r.width > W - 10) left = x - r.width - 18;
+  if (top + r.height > H - 10) top = y - r.height - 18;
+  tip.style.left = Math.max(10, Math.min(left, W - r.width - 10)) + 'px';
+  tip.style.top = Math.max(10, Math.min(top, H - r.height - 10)) + 'px';
+}
+function hidePortraitTip() {
+  const tip = $('pfTip'); if (tip) tip.hidden = true;
+}
+function bindPortraitTip() {
+  document.addEventListener('mouseover', e => {
+    const el = portraitHost(e.target);
+    if (el) showPortraitTip(el, e.clientX, e.clientY);
+  });
+  document.addEventListener('mousemove', e => {
+    const tip = $('pfTip'); if (!tip || tip.hidden) return;
+    if (portraitHost(e.target)) movePortraitTip(e.clientX, e.clientY); else hidePortraitTip();
+  });
+  document.addEventListener('mouseout', e => {
+    const host = portraitHost(e.target); if (!host) return;
+    const to = portraitHost(e.relatedTarget);
+    // 같은 초상화(행 → 배지, 배지 → 행)로 움직인 것이면 툴팁을 유지한다
+    if (to && to.getAttribute('data-portrait') === host.getAttribute('data-portrait')) return;
+    hidePortraitTip();
+  });
+  window.addEventListener('scroll', hidePortraitTip, true);
+  window.addEventListener('blur', hidePortraitTip);
+}
 let G = null;              // 게임 상태
 let chosenScenario = '194';
 let hover = null;          // 마우스 오버 도시
@@ -346,6 +429,7 @@ function boot() {
   cvM.style.cursor = 'grab';
   if (typeof Sound !== 'undefined') Sound.boot();     // 설정 복원 + 첫 입력에서 오디오 활성화
   bindSfx();                                          // 버튼·목록 클릭 효과음
+  bindPortraitTip();                                  // 무장 초상화 호버 툴팁
   migrateLegacySave();                                // 구버전 단일 저장을 슬롯으로 옮긴다
   cvM.addEventListener('pointerdown', e => {
     if (attackIntro) return;
@@ -1911,7 +1995,7 @@ function renderCityPanel() {
   /* 우측 열: 무장 · 인접 도시 · 경고 */
   let colB = '<div class="sec"><span>주둔 무장</span><b>' + offs.length + '명' + (avail < offs.length ? ' · 가용 ' + avail : '') + '</b></div><div class="otags">' +
     (offs.map(o => '<span class="otag' + (o.used ? ' used' : '') + '" title="무력 ' + o.wu + ' · 지력 ' + o.zhi + ' · 정치 ' + o.pol + ' · 매력 ' + o.cha +
-      (SKILLS[o.skill] ? ' · ' + o.skill + ': ' + SKILLS[o.skill].desc : '') + (CombatRules.description(o)?' · '+CombatRules.description(o):'') + (o.used ? ' · 이번 달 명령 완료' : '') + '">' + o.name +
+      (SKILLS[o.skill] ? ' · ' + o.skill + ': ' + SKILLS[o.skill].desc : '') + (CombatRules.description(o)?' · '+CombatRules.description(o):'') + (o.used ? ' · 이번 달 명령 완료' : '') + '">' + portraitHtml(o.name, 16) + o.name +
       (o.used ? '<i class="sk">완료</i>' : (o.skill ? '<i class="sk">' + o.skill + '</i>' : '')) + '</span>').join('') || '<span class="muted">없음</span>') +
   '</div>';
   /* 재야 · 포로 무장 — 등용 후보 */
@@ -1919,7 +2003,7 @@ function renderCityPanel() {
     const sk = SKILLS[o.skill], of = cls === 'pow' ? G.factions[o.faction] : null;
     return '<span class="otag ' + cls + '" title="' + (of ? of.name + ' 소속 포로' : '재야 무장') +
       ' · 무력 ' + o.wu + ' · 지력 ' + o.zhi + ' · 정치 ' + o.pol + ' · 매력 ' + o.cha +
-      (sk ? ' · ' + o.skill + ': ' + sk.desc : '') + '">' + o.name +
+      (sk ? ' · ' + o.skill + ': ' + sk.desc : '') + '">' + portraitHtml(o.name, 16) + o.name +
       '<i class="sk">' + (of ? '포로' : '재야') + '</i></span>';
   };
   colB += '<div class="sec"><span>재야 무장</span><b>' + frees.length + '명</b></div><div class="otags">' +
@@ -2134,7 +2218,7 @@ function renderPick() {
     const o = off(n); const sel = p.sel.indexOf(n) >= 0;
     const sk = SKILLS[o.skill];
     return '<div class="row' + (sel ? ' picked' : '') + '" role="button" tabindex="0" aria-pressed="' + sel + '" id="pickRow' + i + '" onclick="Game.togglePick(\'' + n + '\')">' +
-      '<span class="name">' + n + '</span>' +
+      '<span class="name">' + portraitHtml(n, 34) + n + '</span>' +
       '<span class="stats">무력 ' + o.wu + ' · 지력 ' + o.zhi + ' · 정치 ' + o.pol + ' · 매력 ' + o.cha +
       (sk ? ' · <b>' + o.skill + '</b>(' + sk.desc + ')' : '') + '</span>' +
       '<span class="right" id="pickMark' + i + '">' + (sel ? '✔ 선택' : '') + '</span></div>';
@@ -2480,7 +2564,7 @@ function openAttackTargetList() {
   const rows = attackTargets(at.from).map(n => {
     const d = G.cities[n], df = G.factions[d.owner];
     return '<div class="row" role="button" tabindex="0" onclick="Game.chooseAttackTarget(\'' + n + '\')">' +
-      '<span class="name">' + n + '</span>' +
+      '<span class="name">' + portraitHtml(n, 34) + n + '</span>' +
       '<span class="muted">' + (df ? df.name : '재야') + ' · 병력 ' + commas(d.troops) + ' · 방어 ' + d.def + ' · 훈련 ' + d.training + '</span></div>';
   }).join('');
   showModal('<h3>출진 목적지 선택</h3>' + rows +
@@ -3304,7 +3388,7 @@ function defReinfCity(cityName) {
   const list = officersIn(cityName).filter(o => reinfFreeOfficer(o, 'def')).sort((a, b) => b.wu - a.wu);
   if (!list.length) { toast(cityName + '에 파견할 수 있는 무장이 없습니다'); return; }
   const rows = list.map((o, i) => '<div class="row" role="button" tabindex="0" id="drRow' + i + '" aria-pressed="false" onclick="Game.toggleDefReinf(\'' + o.name + '\')">' +
-    '<span class="name">' + o.name + '</span>' +
+    '<span class="name">' + portraitHtml(o.name, 22) + o.name + '</span>' +
     '<span class="stats">무력 ' + o.wu + ' · 지력 ' + o.zhi + ' · ' + autoBranch(o) + '</span>' +
     '<span class="right" id="drMark' + i + '"></span></div>').join('');
   d.rpick = { city: cityName, list: list.map(o => o.name), sel: [] };
@@ -3655,7 +3739,7 @@ function cmdHire(cityName) {
     const p = hireChance(cityName, o);
     const sk = SKILLS[o.skill];
     return '<div class="row" role="button" tabindex="0" onclick="Game.doHire(\'' + o.name + '\')">' +
-      '<span class="name">' + o.name + '</span>' +
+      '<span class="name">' + portraitHtml(o.name, 22) + o.name + '</span>' +
       '<span class="stats">무력 ' + o.wu + ' · 지력 ' + o.zhi + ' · 정치 ' + o.pol + ' · 매력 ' + o.cha + (sk ? ' · ' + o.skill : '') + '</span>' +
       '<span class="right">' + (o.status === 'pow' ? '포로' : '재야') + ' · 성공률 ' + Math.round(p * 100) + '%</span></div>';
   }).join('');
@@ -3688,7 +3772,7 @@ function cmdReward(cityName) {
   const list = officersIn(cityName).slice().sort((a, b) => a.loyalty - b.loyalty);
   if (!list.length) { toast('무장이 없습니다'); return; }
   const rows = list.map(o => '<div class="row" role="button" tabindex="0" onclick="Game.doReward(\'' + o.name + '\')">' +
-    '<span class="name">' + o.name + '</span>' +
+    '<span class="name">' + portraitHtml(o.name, 22) + o.name + '</span>' +
     '<span class="stats">충성도 ' + o.loyalty + (o.skill ? ' · ' + o.skill : '') + '</span>' +
     '<span class="right">금 300</span></div>').join('');
   showModal('<h3>포상 — ' + cityName + '</h3>' +
@@ -4568,7 +4652,7 @@ function officerBodyHtml(all) {
     const allList = sortOfficers(visibleOfficers(), true);
     const rows = allList.map(o => {
       const f = G.factions[o.faction], st = officerState(o);
-      return '<tr><td>' + o.name + (isLeader(o.name) ? ' ★' : '') + '</td>' +
+      return '<tr' + portraitAttr(o.name) + '><td>' + portraitHtml(o.name, 22) + o.name + (isLeader(o.name) ? ' ★' : '') + '</td>' +
         '<td>' + (f ? '<i class="fdot" style="background:' + f.color + '"></i>' + f.name : '재야') + '</td>' +
         '<td>' + o.city + '</td><td>' + o.wu + '</td><td>' + o.zhi + '</td><td>' + o.pol + '</td><td>' + o.cha + '</td>' +
         '<td><b>' + (o.wu + o.zhi + o.pol + o.cha) + '</b></td><td>' + (o.skill || '-') + (CombatRules.description(o)?'<br><span class="muted">'+CombatRules.description(o)+'</span>':'') + '</td>' +
@@ -4583,7 +4667,7 @@ function officerBodyHtml(all) {
       rows + '</table>';
   }
   const list = sortOfficers(officersOf(G.pf), false);
-  const rows = list.map(o => '<tr><td>' + o.name + (isLeader(o.name) ? ' ★' : '') + '</td><td>' + o.city + '</td><td>' + o.wu + '</td><td>' + o.zhi +
+  const rows = list.map(o => '<tr' + portraitAttr(o.name) + '><td>' + portraitHtml(o.name, 22) + o.name + (isLeader(o.name) ? ' ★' : '') + '</td><td>' + o.city + '</td><td>' + o.wu + '</td><td>' + o.zhi +
     '</td><td>' + o.pol + '</td><td>' + o.cha + '</td><td>' + (o.skill || '-') + (CombatRules.description(o)?'<br><span class="muted">'+CombatRules.description(o)+'</span>':'') + '</td>' +
     '<td style="color:' + (o.loyalty < 45 ? 'var(--bad)' : (o.loyalty >= 80 ? 'var(--good)' : 'inherit')) + '">' + o.loyalty + '</td>' +
     '<td>' + (o.used ? '<span style="color:var(--muted)">완료</span>' : '<span style="color:var(--good)">가능</span>') + '</td></tr>').join('');
@@ -4593,7 +4677,7 @@ function officerBodyHtml(all) {
   if (pows.length) {
     ph = '<h3 style="margin-top:12px">포로 (' + pows.length + '명)</h3>' +
       '<table><tr><th>이름</th><th>도시</th><th>원소속</th><th>무력</th><th>지력</th><th>특기</th></tr>' +
-      pows.map(o => '<tr><td>' + o.name + '</td><td>' + o.city + '</td><td>' +
+      pows.map(o => '<tr' + portraitAttr(o.name) + '><td>' + portraitHtml(o.name, 22) + o.name + '</td><td>' + o.city + '</td><td>' +
         (G.factions[o.faction] ? G.factions[o.faction].name : '재야') + '</td><td>' + o.wu + '</td><td>' + o.zhi +
         '</td><td>' + (o.skill || '-') + '</td></tr>').join('') + '</table>';
   }

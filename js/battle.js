@@ -261,7 +261,11 @@ const Battle = (function () {
     const o=u.officer,sk=SKILLS[o.skill],army=B.opts[u.side];
     const statuses=[u.acted?'행동 완료':u.moved?'이동 완료 · 공격 가능':'미행동'];
     if(isConfused(u))statuses.push('혼란');if(u.burn>0)statuses.push('화상 '+u.burn+'일');
-    const html='<div class="ut-head"><b>'+escape(u.name)+'</b><span>'+(u.side===B.playerSide?'아군':'적군')+' · '+escape(army.name)+'군</span></div>'+
+    const face=portraitFace(u.name), sideTxt=(u.side===B.playerSide?'아군':'적군')+' · '+escape(army.name)+'군';
+    const head=face
+      ? '<div class="ut-head face-head">'+face+'<span class="ut-who"><b>'+escape(u.name)+'</b></span><span class="ut-army">'+sideTxt+'</span></div>'
+      : '<div class="ut-head"><span class="ut-who">'+portraitHtml(u.name,22)+'<b>'+escape(u.name)+'</b></span><span class="ut-army">'+sideTxt+'</span></div>';
+    const html=head+
       '<div class="ut-sub">'+escape(u.branch)+' · '+escape(u.form)+'진 · '+statuses.join(' · ')+'</div>'+
       '<div class="ut-grid"><span>병력</span><b>'+commas(u.troops)+' / '+commas(u.max)+'</b><span>훈련 · 사기</span><b>'+u.training+' · '+u.morale+'</b>'+
       '<span>무력 · 지력</span><b>'+o.wu+' · '+o.zhi+'</b><span>정치 · 매력</span><b>'+o.pol+' · '+o.cha+'</b></div>'+
