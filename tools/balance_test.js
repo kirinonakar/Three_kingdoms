@@ -168,13 +168,13 @@ Game.startNew('cao'); city = Game.state.cities['허창']; city.training = city.m
 const fullCmd = Game.state.cmd; Game.cmdTrain(city.name);
 assert(!Game.state.ui.pick); assert.equal(Game.state.cmd, fullCmd);
 assert(!Game.state.officers.some(o => o.used));
-// The 1.4-times siege threshold must not leak into open-field battles.
+// Timing out always repels the attacker, in both open-field battles and sieges.
 for (const siege of [false, true]) {
   let outcome;
   b = setup([unit('A', 3600)], [unit('D', 3000)], r => { outcome = r; });
   b.opts.siege = siege;
   timers = true; p.timeUp(); timers = false;
-  assert.equal(outcome.winner, siege ? 'defender' : 'attacker');
+  assert.equal(outcome.winner, 'defender');
 }
 Game.startNew('cao'); Game.state.cities['낙양'].def = 0;
 Battle.start({ siege: true, city: Game.state.cities['낙양'], playerSide: 'atk', auto: false,

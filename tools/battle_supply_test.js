@@ -53,6 +53,39 @@ assert(Battle.observation().supply.atk.paid===40);
 assert(el('bRoundInfo').textContent.includes('전투 군량 -40'));
 console.log('[OK] real campaign callback, both armies charged, marching/arrived reinforcements, observation and battle display');
 
+// Initial AI defense requests share the player's two-round preparation benefit.
+// A later request or the siege following a field battle keeps the normal march.
+for (const siege of [false,true]) for (const request of ['prepared','later','continued']) {
+  g=fresh();
+  const target=g.cities['낙양'],source=g.cities['장안'];
+  const support=g.officers.find(o=>o.name==='곽사');
+  g.officers.filter(o=>o.city===source.name).forEach(o=>{o.city=target.name;});
+  Object.assign(support,{city:source.name,faction:'lijue',status:'active',used:true});
+  source.owner='lijue';source.troops=6000;target.links=[source.name];
+  ctx={from:'허창',to:target.name,atk:'cao',def:'lijue',introShown:true,siege,
+    preserveReinf:request==='continued'};
+  if(request==='later') source.troops=0;
+  d.beginBattle(ctx,units('하후돈',20000),units('이각',2000),'atk',false);
+  b=Battle.state;
+  if(request==='later') {source.troops=6000;b.round=2;p.roundStart();}
+  const expected=request==='prepared'?2:3;
+  assert.equal(b.pending.length,1,'AI defender should request one reinforcement');
+  assert.equal(b.pending[0].days,expected,request+': wrong march duration');
+  assert.equal(b.pending[0].due,b.round+expected);
+  assert.equal(ctx.foeReinf[support.name],source.name,'reinforcement origin must be tracked');
+  assert.equal(ctx.foeSent.def,1);
+  assert.equal(source.troops,2400,'reinforcements must be deducted once');
+  const due=b.pending[0].due;
+  for(let round=b.round+1;round<=due;round++) {
+    b.round=round;b.busy=false;p.roundStart();
+    const arrived=b.units.find(u=>u.name===support.name);
+    if(round<due) {assert(!arrived,'reinforcement arrived early');assert.equal(b.pending.length,1);}
+    else {assert(arrived&&arrived.acted,'arrivals must wait until the next round to act');assert.equal(b.pending.length,0);}
+  }
+  assert.equal(source.troops,2400,'an officer already marching/fighting must not be dispatched twice');
+}
+console.log('[OK] AI prepared defense arrives after two rounds, later/continued defense after three, used officers and no duplicate dispatch');
+
 battle=setup(0);g=battle.g;b=battle.b;
 assert.equal(g.factions.cao.food,0);assert.equal(b.units.find(u=>u.side==='atk').morale,72);
 assert.equal(b.units.find(u=>u.side==='def').morale,80);

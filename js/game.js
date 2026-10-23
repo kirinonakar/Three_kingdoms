@@ -41,7 +41,89 @@ const PORTRAITS = {
   '대교': 'assets/portraits/daqiao.jpg',
   '소교': 'assets/portraits/xiaoqiao.jpg',
   '견희': 'assets/portraits/zhenji.jpg',
-  '황월영': 'assets/portraits/huangyueying.jpg'
+  '황월영': 'assets/portraits/huangyueying.jpg',
+  '신헌영': 'assets/portraits/xinxianying.jpg',
+  '감부인': 'assets/portraits/ladygan.jpg',
+  '미부인': 'assets/portraits/ladymi.jpg',
+  '오국태': 'assets/portraits/wuguotai.jpg',
+  '채문희': 'assets/portraits/caiwenji.jpg',
+  '축융': 'assets/portraits/zhurong.jpg',
+  // 주요 무장
+  '관우': 'assets/portraits/guanyu.jpg',
+  '장비': 'assets/portraits/zhangfei.jpg',
+  '조운': 'assets/portraits/zhaoyun.jpg',
+  '제갈량': 'assets/portraits/zhugeliang.jpg',
+  '손권': 'assets/portraits/sunquan.jpg',
+  '주유': 'assets/portraits/zhouyu.jpg',
+  '사마의': 'assets/portraits/simayi.jpg',
+  '하후돈': 'assets/portraits/xiahoudun.jpg',
+  '장료': 'assets/portraits/zhangliao.jpg',
+  // 위(魏) 주요 무장
+  '순욱': 'assets/portraits/xunyu.jpg',
+  '전위': 'assets/portraits/dianwei.jpg',
+  '하후연': 'assets/portraits/xiahouyuan.jpg',
+  '서황': 'assets/portraits/xuhuang.jpg',
+  '조인': 'assets/portraits/caoren.jpg',
+  '악진': 'assets/portraits/yuejin.jpg',
+  '이전': 'assets/portraits/lidian.jpg',
+  '조홍': 'assets/portraits/caohong.jpg',
+  '정욱': 'assets/portraits/chengyu.jpg',
+  '순유': 'assets/portraits/xunyou.jpg',
+  '곽가': 'assets/portraits/guojia.jpg',
+  '허저': 'assets/portraits/xuchu.jpg',
+  '우금': 'assets/portraits/yujin.jpg',
+  // 촉(蜀) 주요 무장
+  '마초': 'assets/portraits/machao.jpg',
+  '황충': 'assets/portraits/huangzhong.jpg',
+  '방통': 'assets/portraits/pangtong.jpg',
+  '법정': 'assets/portraits/fazheng.jpg',
+  '서서': 'assets/portraits/xushu.jpg',
+  '강유': 'assets/portraits/jiangwei.jpg',
+  '위연': 'assets/portraits/weiyan.jpg',
+  // 오(吳) 주요 무장
+  '태사자': 'assets/portraits/taishici.jpg',
+  '황개': 'assets/portraits/huanggai.jpg',
+  '능통': 'assets/portraits/lingtong.jpg',
+  '정보': 'assets/portraits/chengpu.jpg',
+  '한당': 'assets/portraits/handang.jpg',
+  '감녕': 'assets/portraits/ganning.jpg',
+  '주태': 'assets/portraits/zhoutai.jpg',
+  '육손': 'assets/portraits/luxun.jpg',
+  '여몽': 'assets/portraits/lumeng.jpg',
+  '노숙': 'assets/portraits/lusu.jpg',
+  // 군웅 · 가상 세력
+  '동탁': 'assets/portraits/dongzhuo.jpg',
+  '화웅': 'assets/portraits/huaxiong.jpg',
+  '장각': 'assets/portraits/zhangjue.jpg',
+  '진궁': 'assets/portraits/chengong.jpg',
+  '전풍': 'assets/portraits/tianfeng.jpg',
+  '저수': 'assets/portraits/jushou.jpg',
+  '안량': 'assets/portraits/yanliang.jpg',
+  '문추': 'assets/portraits/wenchou.jpg',
+  '곽도': 'assets/portraits/guotu.jpg',
+  '봉기': 'assets/portraits/fengji.jpg',
+  '심배': 'assets/portraits/shenpei.jpg',
+  '장합': 'assets/portraits/zhanghe.jpg',
+  '가후': 'assets/portraits/jiaxu.jpg',
+  '방덕': 'assets/portraits/pangde.jpg',
+  '마속': 'assets/portraits/masu.jpg',
+  '관평': 'assets/portraits/guanping.jpg',
+  '조비': 'assets/portraits/caopi.jpg',
+  '사마사': 'assets/portraits/simashi.jpg',
+  '등애': 'assets/portraits/dengai.jpg',
+  '종회': 'assets/portraits/zhonghui.jpg',
+  '제갈근': 'assets/portraits/zhugejin.jpg',
+  '육항': 'assets/portraits/lukang.jpg',
+  '마량': 'assets/portraits/maliang.jpg',
+  '유봉': 'assets/portraits/liufeng.jpg',
+  '문앙': 'assets/portraits/wenang.jpg',
+  '정봉': 'assets/portraits/dingfeng.jpg',
+  '관흥': 'assets/portraits/guanxing.jpg',
+  '장포': 'assets/portraits/zhangbao.jpg',
+  '허유': 'assets/portraits/xuyou.jpg',
+  '진등': 'assets/portraits/chendeng.jpg',
+  '미축': 'assets/portraits/mizhu.jpg',
+  '왕랑': 'assets/portraits/wanglang.jpg'
 };
 function portraitHtml(name, size) {
   const sz = 'pf s' + (size || 22);
@@ -3514,7 +3596,10 @@ function battleAiReinforce(req) {
   const maxRound = (req && req.maxRound) || st.maxRound || 15;
   const left = maxRound - st.round;
   if (left < 1) return;                             // 도착할 라운드가 남아 있지 않다
-  const days = Math.max(1, Math.min(
+  // 첫 전투 시작 시 수비 AI가 미리 청한 원군은 수비 편성과 같은 이틀을 적용한다.
+  // 야전에서 이어진 공성은 새 편성 단계가 아니므로 일반 행군 일수를 쓴다.
+  const preparedDefense = side === 'def' && st.round === 1 && !ctx.preserveReinf;
+  const days = Math.max(1, Math.min(preparedDefense ? DEF_REINF_DAYS :
     (typeof Battle.reinforceDays === 'number' ? Battle.reinforceDays : 3), left));
   const target = G.cities[ctx.to];
   if (!target) return;
@@ -4763,7 +4848,7 @@ function openHelp() {
     '<p><b>내정</b> : 개발(농업→군량) · 상업(→금) · 치안(금·군량 생산/징병 효율) · 수복(방어도). <b>방어도 0~50의 보정은 기존대로 유지하고, 50 초과부터 추가로 강화됩니다. 방어력 보정은 50에서 +12.5%, 100에서 +38%입니다.</b> 1/2/3명 배치에 금 60/95/130과 명령 1이 들고, 추가 무장의 효과는 65%/40%로 줄어듭니다. 정치·지력과 명재 특기가 효과를 높입니다. 선택 화면에 정확한 비용·효과·월 생산 증가를 표시하며, 최대치 근처에서는 실제 상승분만큼 비용도 줄어듭니다.</p>' +
     '<p><b>재정·보급</b> : 매달 병력 500명당 금 1, 평시 90명당 군량 1을 소비합니다(도시별 올림). 인구 상한 초과 병력의 군량은 2배입니다. 치안은 금·군량 생산 모두에 영향을 줍니다. 도시 패널에서 모든 보유 도시를 합산한 월 순증감·군량 지속 기간을 확인하세요. [군량 매입]은 금 100/300/600으로 군량 200/600/1,200을 얻습니다. [군량 매각]은 군량 200/600/1,200을 금 80/240/480에 팝니다(매입가 대비 20% 낮음). 매입·매각 모두 명령 1을 쓰며 무장은 필요 없습니다. 군량 부족 시 미지급 비율에 따라 병력·사기가 감소하고, 급료 부족 시 사기가 감소합니다. 전투에서는 참가 병력과 행군 중인 원군 600명당 매 라운드 군량 1을 추가 소비합니다. 보급이 부족하면 해당 진영의 사기가 라운드당 최대 8 내려갑니다. 편성 화면에서 예상 소모를, 전장에서 누적 소모·잔여 군량을 확인하세요. 새 게임은 평시 주둔군 6개월분(최소 600)을 비축합니다.</p>' +
     '<p><b>군사</b> : 징병(1,000명당 금 80·치안 -5·신병 훈련 30/사기 55, <b>도시당 월 1회</b>) · 모병(1,000명당 금 160·치안 -1·신병 훈련 55/사기 75, 같은 달에 반복 가능). 충원·이동 시 기존 병력과 훈련·사기를 인원 비율로 합산합니다. 훈련(훈련도·사기↑) · 이동(아군 도시로, <b>무장 인원 제한 없음</b>, 출발 도시 병력 전부 이동 가능 — 목적지 인구 상한을 넘겨도 주둔 가능. 무장을 고르면 <b>목적지 후보 도시가 지도에 금색 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>. 지도 아래 띠의 [목록에서 선택]으로 목록 선택도 가능) · 출진(적 도시 공격 — 무장을 고르면 <b>목적지 후보 적 도시가 지도에 붉은 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>(지도 아래 띠의 [목록에서 선택]도 가능). 인접 아군 도시와 <b>합동 출진</b> → 전술 전투. 합류 도시 부대는 원군처럼 늦게 도착하고, 전투가 끝나면 무장·잔존 병력이 각자 출발 도시로 복귀).</p>' +
-    '<p><b>전투</b> : 부대별로 이동/공격/계략(화계·혼란·고무)/일기토/진형을 사용합니다. <b>이동한 뒤에도 같은 턴에 공격할 수 있습니다.</b> 병과 상성(기병→궁병→보병→기병), 진형, 지형(숲·산·성)을 활용하세요. <b>기병은 [돌격]</b>으로 최대 3칸까지 적 부대를 뚫고 반대편으로 빠져나올 수 있지만 <b>성은 빈 성·아군 성을 포함해 관통하거나 착지할 수 없습니다.</b>  <b>보병은 2부대 이상이 모이면 [일제공격]</b>으로 같은 적을 동시에 공격합니다(반격 없음). <b>궁병은 [불화살]</b>로 적을 불태워 2라운드간 화상 피해를 남길 수 있고(부대당 2회, 숲에서 1.5배), <b>궁병이 아닌 부대가 근접 공격하면 상대의 반격</b>으로 아군도 피해를 입습니다. <b>성에서 공격하면 받는 반격 피해가 지형 방어에 더해 25% 줄어듭니다.</b> 전투 중에는 인접 아군 도시에서 <b>원군</b>을 보낼 수 있고, 원군은 행군에 며칠이 걸려 도착합니다(진군 상황은 전장 위쪽 상태바에 표시). <b>적도 병력이 불리해지면 원군을 보내므로</b> 상태바의 적 원군 표시를 확인하세요. 적이 우리 성을 공격하면 전투 전에 <b>수비 편성</b> 창이 열려 출진처럼 무장·병과·진형·병력을 직접 지정할 수 있습니다(창을 닫으면 자동 편성). <b>AI도 매 라운드 상황에 맞춰 진형을 바꿉니다</b>(성 수비=방원, 궁병=학익, 기병=봉시, 보병=거리별 방원·안행·어린). 진형 전환은 <b>부대마다 첫 1회가 행동을 소모하지 않습니다</b>(이후 전환은 행동 소모, AI도 동일). 전투는 최대 <b>15라운드</b>입니다. 공성전에서 <b>세 성의 깃발이 모두 공격군으로 바뀌면 방어측 패배</b>입니다. <b>수비측은 후퇴할 인접 아군 도시가 있으면 [후퇴]</b>로 성을 내주고 잔존 병력의 80%를 이끌고 빠져나갈 수 있습니다(무장도 함께 이동). <b>수비 편성 창에서도 [후퇴]</b>를 눌러 싸우지 않고 성을 내주고 빠져나갈 수 있습니다(편성 중 요청한 원군은 취소되어 출발 도시로 돌아갑니다). <b>[다음 턴]</b> 버튼으로 남은 부대를 대기시키고 턴을 넘길 수 있습니다.</p>' +
+    '<p><b>전투</b> : 부대별로 이동/공격/계략(화계·혼란·고무)/일기토/진형을 사용합니다. <b>이동한 뒤에도 같은 턴에 공격할 수 있습니다.</b> 병과 상성(기병→궁병→보병→기병), 진형, 지형(숲·산·성)을 활용하세요. <b>기병은 [돌격]</b>으로 최대 3칸까지 적 부대를 뚫고 반대편으로 빠져나올 수 있지만 <b>성은 빈 성·아군 성을 포함해 관통하거나 착지할 수 없습니다.</b>  <b>보병은 2부대 이상이 모이면 [일제공격]</b>으로 같은 적을 동시에 공격합니다(반격 없음). <b>궁병은 [불화살]</b>로 적을 불태워 2라운드간 화상 피해를 남길 수 있고(부대당 2회, 숲에서 1.5배), <b>궁병이 아닌 부대가 근접 공격하면 상대의 반격</b>으로 아군도 피해를 입습니다. <b>성에서 공격하면 받는 반격 피해가 지형 방어에 더해 25% 줄어듭니다.</b> 전투 중에는 인접 아군 도시에서 <b>원군</b>을 보낼 수 있고, 원군은 행군에 며칠이 걸려 도착합니다(진군 상황은 전장 위쪽 상태바에 표시). <b>적도 병력이 불리해지면 원군을 보내므로</b> 상태바의 적 원군 표시를 확인하세요. <b>수비 편성 중 미리 요청한 원군은 플레이어·AI 모두 2라운드 뒤 도착</b>합니다. 적이 우리 성을 공격하면 전투 전에 <b>수비 편성</b> 창이 열려 출진처럼 무장·병과·진형·병력을 직접 지정할 수 있습니다(창을 닫으면 자동 편성). <b>AI도 매 라운드 상황에 맞춰 진형을 바꿉니다</b>(성 수비=방원, 궁병=학익, 기병=봉시, 보병=거리별 방원·안행·어린). 진형 전환은 <b>부대마다 첫 1회가 행동을 소모하지 않습니다</b>(이후 전환은 행동 소모, AI도 동일). 전투는 최대 <b>15라운드</b>입니다. <b>최대 라운드가 끝나면 공격군이 자동으로 후퇴하고 방어군이 승리합니다.</b> 공성전에서 <b>세 성의 깃발이 모두 공격군으로 바뀌면 방어측 패배</b>입니다. <b>수비측은 후퇴할 인접 아군 도시가 있으면 [후퇴]</b>로 성을 내주고 잔존 병력의 80%를 이끌고 빠져나갈 수 있습니다(무장도 함께 이동). <b>수비 편성 창에서도 [후퇴]</b>를 눌러 싸우지 않고 성을 내주고 빠져나갈 수 있습니다(편성 중 요청한 원군은 취소되어 출발 도시로 돌아갑니다). <b>[다음 턴]</b> 버튼으로 남은 부대를 대기시키고 턴을 넘길 수 있습니다.</p>' +
     '<p><b>병력과 회복</b> : 현재 병력이 많을수록 공격·반격이 강해지며, 3,000명을 넘는 대부대는 증가폭이 완만해집니다. 1,000명 미만 부대는 사기·화상 효과와 적 계략 성공률이 낮고, 화계 피해도 병력에 비례해 줄어듭니다. 일기토 신청은 부대당 전투 중 1회입니다. 고무는 반드시 성공하며, 훈련도가 100이어도 [훈련]으로 사기를 회복할 수 있습니다.</p>' +
     '<p><b>인사</b> : 등용(재야·포로 설득) · 포상(금 300, 충성도↑). 충성도가 45 미만이면 배신할 수 있습니다. 세력 수장(★)은 충성 100으로 배신·포로가 없습니다.</p>' +
     '<p><b>시기별 등장</b> : 194년 이후 인물(제갈량·사마의·강유 등)은 <b>역사적 등장 시기</b>에 맞춰 해당 지역에 나타납니다. 등장한 달에는 전황 기록에 알림이 뜨고, 그 도시를 지배하는 세력이 있으면 곧바로 합류하며, 아니면 재야로 남아 [등용]으로 설득할 수 있습니다. 아직 등장하지 않은 인물은 무장 일람에 표시되지 않습니다.</p>' +

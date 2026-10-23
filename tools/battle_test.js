@@ -160,6 +160,36 @@ for (let i = 0; i < 12; i++) {
   }
 }
 
+/* 최대 라운드: 마지막 라운드까지 진행하고, 병력 우세와 무관하게 공격군이 철수한다. */
+for (const siege of [false, true]) for (const side of ['atk', 'def']) for (const auto of [false, true]) {
+  const tag = '시간 초과/' + (siege ? '공성' : '야전') + '/' + side + '/' + (auto ? '자동' : '수동');
+  let result = null, calls = 0;
+  pauseTimers = true;
+  Battle.start({
+    siege, city: Game.state.cities['낙양'], playerSide: side, auto: false,
+    atk: { name: '공격', color: '#4a6fd6', units: [mkU('하후돈', 20000, '보병')] },
+    def: { name: '수비', color: '#9a5a5a', units: [mkU('이각', 2000, '보병')] },
+    onEnd: x => { result = x; calls++; }
+  });
+  const b = Battle.state;
+  b.round = b.maxRound - 1;
+  b.side = side; b.busy = false;
+  b.units.forEach(u => { u.acted = true; });
+  Battle.act('auto');
+  check(b.round === b.maxRound && !b.over && calls === 0, tag + ': 마지막 라운드 전에 종료됨');
+
+  b.side = side; b.busy = false; b.auto = false;
+  b.units.forEach(u => { u.acted = auto || u.side !== side; });
+  pauseTimers = false;
+  Battle.act(auto ? 'auto' : 'nextTurn');
+  check(calls === 1 && result && result.winner === 'defender', tag + ': 공격군이 우세해도 방어측 승리여야 함');
+  check(result && result.rounds === b.maxRound, tag + ': 종료 라운드 오류');
+  check(result && result.atk[0].troops === 20000 && result.def[0].troops === 2000, tag + ': 철수 시 잔존 병력 변경');
+  check(result && !result.fieldRetreat && !result.retreatTo, tag + ': 수비측 후퇴로 처리됨');
+  check(b.log.some(l => l.includes('공격') && l.includes('자동으로 후퇴')), tag + ': 자동 후퇴 안내 없음');
+  check(Battle.state === null, tag + ': 전투 상태 미정리');
+}
+
 /* 3) 플레이어(공격측) 수동 — 대기/이동/공격/계략/진형/일기토 클릭 경로 */
 const atk3 = [mkU('하후돈', 9000, '기병'), mkU('이전', 8000, '보병')];
 const def3 = [mkU('이각', 8000, '보병'), mkU('곽사', 7000, '궁병')];

@@ -1217,9 +1217,8 @@ const Battle = (function () {
 
   /* ── 종료 ──────────────────────────────────────────── */
   function timeUp() {
-    const at = troopsOf('atk'), dt = troopsOf('def');
-    bLog('⏳ 시간 초과! 남은 병력 — ' + B.opts.atk.name + ' ' + commas(at) + ' vs ' + B.opts.def.name + ' ' + commas(dt));
-    end(at > dt * (B.opts.siege ? 1.4 : 1) ? 'attacker' : 'defender');
+    bLog('⏳ 최대 ' + B.maxRound + '라운드 경과 — ' + B.opts.atk.name + '군이 자동으로 후퇴합니다. 방어에 성공했습니다.');
+    end('defender');
   }
   function end(winner, extra) {
     if (!B || B.over) return;
