@@ -113,6 +113,38 @@ const BattleTerrain = (function () {
     }
     return yes;
   }
+  // Test the whole segment between tile centers, including water narrower than a tile.
+  // Split at polygon edges so even a very thin channel cannot fall between samples.
+  function waterBetween(g, a, b) {
+    const ax=a.x+.5, ay=a.y+.5, dx=b.x-a.x, dy=b.y-a.y;
+    return g.rivers.concat(g.lakes).some(r=>{
+      const cuts=[0,1], pts=r.polygon;
+      for(let i=0,j=pts.length-1;i<pts.length;j=i++) {
+        const p=pts[j], q=pts[i], ex=q[0]-p[0], ey=q[1]-p[1];
+        const det=dx*ey-dy*ex;
+        if(Math.abs(det)<1e-10) continue;
+        const px=p[0]-ax, py=p[1]-ay;
+        const t=(px*ey-py*ex)/det, u=(px*dy-py*dx)/det;
+        if(t>0&&t<1&&u>=0&&u<=1) cuts.push(t);
+      }
+      cuts.sort((x,y)=>x-y);
+      return cuts.some((t,i)=>i>0&&t-cuts[i-1]>1e-10&&
+        inside(ax+dx*(t+cuts[i-1])*.5,ay+dy*(t+cuts[i-1])*.5,pts));
+    });
+  }
+  // Existing dry-to-dry passages across sub-tile streams also need a visible ford.
+  function edgeCrossings(t, g) {
+    const out=[];
+    for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) {
+      if(t[y][x]>=WATER) continue;
+      for(const [dx,dy] of [[1,0],[0,1]]) {
+        const from={x,y}, to={x:x+dx,y:y+dy};
+        if(to.x>=COLS||to.y>=ROWS||t[to.y][to.x]>=WATER||!waterBetween(g,from,to)) continue;
+        out.push({from,to,axis:dx?'x':'y'});
+      }
+    }
+    return out;
+  }
   // Subdivide the centerline before offsetting its banks: no per-tile disks or scalloped edges.
   function smooth(pts) {
     const out=[];
@@ -235,6 +267,7 @@ const BattleTerrain = (function () {
     }
     connect(terrain);
     const crossings=riverCrossings(terrain,rivers);
+    const edgeFords=edgeCrossings(terrain,{rivers,lakes});
     // Three separate strongpoints, in different sectors. Keep one whole tile between castles,
     // preserve water/ford cells, and vary positions with each city's topography.
     if(siege) {
@@ -276,9 +309,9 @@ const BattleTerrain = (function () {
         fields.push({x:cx,y:cy,angle,pts,seed:i});
       }
     }
-    return {name,region:p.region,detail:p.detail,theme:p.theme,palette:palettes[p.theme],style,scale,fields,seed,terrain,elevation,rivers,lakes,ridges,crossings,
+    return {name,region:p.region,detail:p.detail,theme:p.theme,palette:palettes[p.theme],style,scale,fields,seed,terrain,elevation,rivers,lakes,ridges,crossings,edgeFords,
       labels:[p.region,...rivers.map(r=>r.name),...lakes.map(l=>l.name),...ridges.map(r=>r.name)]};
   }
-  return { build, profiles, inside };
+  return { build, profiles, inside, waterBetween };
 })();
 if(typeof window!=='undefined') window.BattleTerrain=BattleTerrain;

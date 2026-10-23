@@ -36,6 +36,19 @@ for(const [name,x,y] of cities) {
       }
     }
     assert.equal(seen.size,land.length,name+': stranded land/fort');
+    // Independently sample every dry-to-dry step: no invisible crossing may remain.
+    for(const [xx,yy] of land.filter(([x,y])=>t[y][x]<4)) {
+      for(const [nx,ny] of [[xx+1,yy],[xx,yy+1]]) {
+        if(nx>=13||ny>=9||t[ny][nx]>=4) continue;
+        const a={x:xx,y:yy},b={x:nx,y:ny};
+        const wet=Array.from({length:199},(_,i)=>(i+1)/200).some(f=>g.rivers.concat(g.lakes)
+          .some(r=>geo.inside(xx+.5+(nx-xx)*f,yy+.5+(ny-yy)*f,r.polygon)));
+        const marked=g.edgeFords.some(c=>c.from.x===xx&&c.from.y===yy&&c.to.x===nx&&c.to.y===ny);
+        assert.equal(marked,geo.waterBetween(g,a,b),name+': unmarked edge ford');
+        if(wet) assert(marked,name+': visible stream has an invisible crossing');
+        assert.equal(geo.waterBetween(g,a,b),geo.waterBetween(g,b,a),name+': asymmetric water barrier');
+      }
+    }
     assert.equal(g.crossings.length,g.rivers.length,name+': missing river crossing');
     for (const river of g.rivers) {
       const crossing=g.crossings.find(c=>c.river===river.name);
@@ -69,4 +82,11 @@ assert(hf.terrain[8][12]===4,'Hefei: southeastern Chao lake missing');
 assert(hf.terrain[0][0]!==4,'Hefei: northwestern plain flooded');
 const cd=geo.build({name:'성도'},false);
 assert(cd.terrain.flat().filter(v=>v===0).length>40,'Chengdu: alluvial plain lost');
-console.log('[OK] 30 cities × field/siege: bank-to-bank fords on every river, connected land, matching banks, separate distributed castles, reproducible geography');
+const yn=geo.build({name:'여남'},false);
+for(const x of [6,7,8]) assert(yn.edgeFords.some(c=>c.from.x===x&&c.from.y===4&&c.to.x===x&&c.to.y===5),'여수: narrow crossing missing at '+x);
+// A channel thinner than a sampling interval must still block melee; a tangent must not.
+const thin={rivers:[{polygon:[[.701,0],[.702,0],[.702,2],[.701,2]]}],lakes:[]};
+assert(geo.waterBetween(thin,{x:0,y:0},{x:1,y:0}),'sub-pixel channel missed');
+assert(!geo.waterBetween(thin,{x:0,y:2},{x:1,y:2}),'same-bank path blocked');
+assert(!geo.waterBetween({rivers:[],lakes:[{polygon:[[1,.5],[.8,0],[1.2,0]]}]},{x:0,y:0},{x:1,y:0}),'shoreline tangent blocked');
+console.log('[OK] 30 cities × field/siege: marked sub-tile crossings, exact water barriers, bank-to-bank fords, connected land, matching banks, separate castles, reproducible geography');

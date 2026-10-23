@@ -26,7 +26,7 @@ const battle = fs.readFileSync(process.env.BALANCE_BATTLE_SOURCE || path.join(ro
 assert(battle.includes(marker), 'battle probe insertion point changed');
 vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js', 'battle-terrain.js'].map(f =>
   fs.readFileSync(f==='combat-rules.js'&&process.env.BALANCE_RULES_SOURCE?process.env.BALANCE_RULES_SOURCE:path.join(root, 'js', f), 'utf8')).join('\n') + '\n' +
-  battle.replace(marker, '    probe: { calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct, checkForts, syncForts, fortDuty, chargeOptions, attackAct, doCharge },\n' + marker), sandbox);
+  battle.replace(marker, '    probe: { calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct, checkForts, syncForts, fortDuty, chargeOptions, attackAct, doCharge, attackTargets, volleyPartners, doVolley },\n' + marker), sandbox);
 const { Game, Battle } = sandbox, p = Battle.probe;
 const rules=vm.runInContext('CombatRules',sandbox);
 const officer = (name, wu = 80, zhi = 80) => ({ name, wu, zhi, pol: 80, cha: 80, skill: '' });
@@ -37,6 +37,7 @@ function setup(atk = [unit('A', 3000)], def = [unit('D', 3000)], onEnd = noop) {
     atk: { name: '공격', color: '#444', units: atk }, def: { name: '수비', color: '#888', units: def }, onEnd });
   const b = Battle.state;
   b.terrain = Array.from({ length: 9 }, () => Array(13).fill(0)); b.forts = [];
+  b.geo={...b.geo,terrain:b.terrain,rivers:[],lakes:[],crossings:[],edgeFords:[]};
   b.units.forEach((u, i) => { u.x = 4 + i; u.y = 4; });
   return b;
 }
@@ -227,6 +228,54 @@ for(const side of ['atk','def'])for(const fort of [false,true]) {
 b=setup();a=b.units[0];d=b.units[1];b.terrain[a.y][a.x]=3;d.confused=1;
 p.attackAct(a,d);assert.equal(a.troops,3000,'fort changes must preserve confusion counter suppression');
 console.log('[OK] sequential flag victory/recapture, attack AI flag pursuit, castle-blocked cavalry and 25% received counter reduction for both armies');
+
+// Real regional geometry: a sub-tile river must not permit any melee action.
+const geo=vm.runInContext('BattleTerrain',sandbox);
+let riverChecks=0;
+for(const city of Object.values(Game.state.cities)) for(const siege of [false,true]) {
+  b=setup([unit('A',3000),unit('ally',3000)],[unit('D',3000)]);
+  b.geo=geo.build(city,siege);b.terrain=b.geo.terrain;b.opts.city=city;b.opts.siege=siege;
+  a=b.units[0];const mate=b.units[1];d=b.units[2];
+  for(const edge of b.geo.edgeFords) for(const side of ['atk','def']) for(const branch of ['보병','기병']) {
+    a.side=mate.side=side;d.side=side==='atk'?'def':'atk';a.branch=branch;
+    Object.assign(a,side==='atk'?edge.from:edge.to);Object.assign(d,side==='atk'?edge.to:edge.from);
+    mate.x=0;mate.y=0;mate.acted=false;a.acted=false;a.moved=false;
+    b.side=b.playerSide=side;b.sel=a;b.mode='select';b.busy=false;
+    const tag=city.name+'/'+siege+'/'+side+'/'+branch;
+    assert(!p.attackTargets(a).includes(d),tag+': cross-river attack target');
+    assert(!p.duelTargets(a).includes(d),tag+': cross-river duel target');
+    assert(!p.chargeOptions(a).some(o=>o.through.some(v=>v.unit===d)),tag+': cross-river charge');
+    const before=d.troops,attackerBefore=a.troops;
+    assert.equal(Battle.clickCell(d.x,d.y),false,tag+': cross-river click accepted');
+    p.attackAct(a,d);p.doDuel(a,d);p.doVolley(a,d);
+    assert.equal(d.troops,before,tag+': melee damage crossed river');
+    assert.equal(a.troops,attackerBefore,tag+': illegal counterattack');
+    assert(!a.acted,tag+': blocked attack consumed action');
+    const tile=Battle.observation().tiles.find(t=>t.x===a.x&&t.y===a.y);
+    assert(tile.fords.length,tag+': ford direction missing from accessible board');
+    a.branch='궁병';
+    assert(p.attackTargets(a).includes(d),tag+': cross-river archery blocked');
+    assert(!p.duelTargets(a).includes(d),tag+': archer can duel across river');
+    riverChecks++;
+  }
+}
+// An ally across the river cannot join a same-bank infantry volley, from either side.
+for(const side of ['atk','def']) {
+  b=setup([unit('A',3000),unit('ally',3000)],[unit('D',3000)]);
+  b.geo=geo.build({name:'여남'},false);b.terrain=b.geo.terrain;
+  a=b.units[0];const mate=b.units[1];d=b.units[2];
+  a.side=mate.side=side;d.side=side==='atk'?'def':'atk';
+  Object.assign(a,{x:7,y:4});Object.assign(d,{x:6,y:4});Object.assign(mate,{x:6,y:5});
+  assert.equal(p.volleyPartners(a,d).length,0,'cross-river partner joined volley/'+side);
+  const before=d.troops;p.doVolley(a,d);assert.equal(d.troops,before);
+  Object.assign(mate,{x:6,y:3});assert(p.volleyPartners(a,d).includes(mate),'same-bank volley blocked/'+side);
+  // Entering a real ford still permits close combat against an adjacent bank unit.
+  const ford=b.geo.crossings[0];Object.assign(a,ford.from);Object.assign(d,ford.cells[0]);
+  assert(p.attackTargets(a).includes(d),'ford combat blocked/'+side);
+  assert(p.attackTargets(d).includes(a),'reverse ford combat blocked/'+side);
+  const hp=d.troops;p.attackAct(a,d);assert(d.troops<hp,'ford attack did not execute/'+side);
+}
+console.log('[OK] '+riverChecks+' regional river/side/branch cases: melee, charge, volley, duel blocked; archery, same-bank volley and ford combat retained');
 }
 
 if (process.argv.includes('--simulate') || process.argv.includes('--simulate-only')) {

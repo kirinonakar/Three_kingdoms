@@ -248,9 +248,18 @@ const Battle = (function () {
     const r=cv.getBoundingClientRect(), x=Math.floor((e.clientX-r.left)/r.width*COLS), y=Math.floor((e.clientY-r.top)/r.height*ROWS);
     if(x<0||y<0||x>=COLS||y>=ROWS) {hideUnitTooltip();return;}
     const names=['평지 · 기본 이동','숲 · 방어 +15%','산 · 방어 +25%','성 · 방어 +40%','물 · 진입 불가','여울 · 도하 가능'];
-    const el=$('bTerrainInfo');if(el) el.textContent=(x+1)+'열 '+(y+1)+'행 · '+names[B.terrain[y][x]];
+    const fords=fordDirections(x,y);
+    const el=$('bTerrainInfo');if(el) el.textContent=(x+1)+'열 '+(y+1)+'행 · '+names[B.terrain[y][x]]+
+      (fords.length?' · '+fords.join('·')+' 여울로 도하 가능':'');
     const moving=B.units.find(u=>{const p=u.alive&&animPos(u);return p && Math.abs(p.x+.5-(e.clientX-r.left)/r.width*COLS)<.44 && Math.abs(p.y+.5-(e.clientY-r.top)/r.height*ROWS)<.44;});
     showUnitTooltip(moving || unitAt(x,y),e);
+  }
+
+  function fordDirections(x,y) {
+    return B.geo.edgeFords.flatMap(c=>{
+      const other=c.from.x===x&&c.from.y===y?c.to:c.to.x===x&&c.to.y===y?c.from:null;
+      return other?[other.x>x?'동쪽':other.x<x?'서쪽':other.y>y?'남쪽':'북쪽']:[];
+    });
   }
 
   function hideUnitTooltip() {const el=$('bUnitTooltip');if(el)el.hidden=true;}
@@ -574,6 +583,14 @@ const Battle = (function () {
   const CHARGE_RANGE = 3;       // 돌격으로 달릴 수 있는 최대 거리(칸)
   const CHARGE_RATE = 0.35;     // 뚫은 적에게 주는 피해 비율
 
+  // 여울 칸 안에서는 접전할 수 있지만, 양안 사이의 물길을 넘어 때릴 수는 없다.
+  function meleeReachable(a, d) {
+    if (mdist(a,d)!==1) return false;
+    const at=B.terrain[a.y][a.x], dt=B.terrain[d.y][d.x];
+    if (at===WATER||dt===WATER) return false;
+    return at===FORD||dt===FORD||!BattleTerrain.waterBetween(B.geo,a,d);
+  }
+
   // 돌격 착지점 — 직선으로 적을 뚫고 나간 자리
   function chargeOptions(u) {
     if (!u || u.branch !== '기병') return [];
@@ -587,6 +604,7 @@ const Battle = (function () {
         if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) break;
         const terrain = B.terrain[ny][nx];
         if (terrain === WATER || terrain === 3) break; // 물·성은 돌격 경로와 착지점에서 제외한다 (빈 성·아군 성도 동일)
+        if (!meleeReachable({x:nx-dir[0],y:ny-dir[1]},{x:nx,y:ny})) break;
         const occ = unitAt(nx, ny);
         if (occ) {
           if (occ.side === u.side) continue;           // 아군 위로는 지나갈 수 있다 (피해 없음)
@@ -632,9 +650,9 @@ const Battle = (function () {
 
   function volleyPartners(u, target) {
     if (!u || u.branch !== '보병' || !target || !target.alive) return [];
-    if (mdist(u, target) !== 1) return [];
+    if (!meleeReachable(u, target)) return [];
     return B.units.filter(x => x !== u && x.alive && x.side === u.side &&
-      x.branch === '보병' && !x.acted && !isConfused(x) && mdist(x, target) === 1)
+      x.branch === '보병' && !x.acted && !isConfused(x) && meleeReachable(x, target))
       .slice(0, VOLLEY_PARTNERS);
   }
   function volleyTargets(u) {
@@ -710,12 +728,13 @@ const Battle = (function () {
     afterAction(1060);
   }
   function attackTargets(u) {
-    return B.units.filter(t => t.alive && t.side !== u.side && mdist(t, u) <= BRANCHES[u.branch].range);
+    return B.units.filter(t => t.alive && t.side !== u.side && mdist(t, u) <= BRANCHES[u.branch].range &&
+      (u.branch==='궁병'||meleeReachable(u,t)));
   }
   // 인접(상하좌우 1칸)한 적 부대 — 일기토 판정과 안내 문구가 같은 기준을 쓴다
   function adjacentFoes(u) {
     if (!u) return [];
-    return B.units.filter(t => t.alive && t.side !== u.side && mdist(t, u) === 1);
+    return B.units.filter(t => t.alive && t.side !== u.side && meleeReachable(u,t));
   }
   function duelTargets(u) {
     if (!u || u.dueled || u.noOfficer) return [];
@@ -727,7 +746,7 @@ const Battle = (function () {
     if (u.noOfficer) return u.name + ' 부대는 무장이 없어 일기토를 걸 수 없습니다.';
     if (u.dueled) return u.name + ' 부대는 이미 일기토를 했습니다 (부대당 전투 중 1회).';
     const adj = adjacentFoes(u);
-    if (!adj.length) return '일기토를 걸 상대가 인접(상하좌우 1칸)해 있지 않습니다.';
+    if (!adj.length) return '일기토를 걸 상대가 인접(상하좌우 1칸)해 있지 않거나 사이에 강이 있습니다.';
     return '인접한 ' + adj.map(t => t.name).join('·') + ' 부대는 무장이 없어 일기토를 걸 수 없습니다.';
   }
   function stratRange(u, t) { return mdist(u, t) <= 3; }
@@ -749,14 +768,14 @@ const Battle = (function () {
   const FORT_COUNTER_TAKEN = 0.75; // 성에서 공격한 부대는 지형 방어에 더해 받는 반격 피해 25% 경감
 
   function attackAct(a, d) {
-    if (!B || B.over || !a.alive || !d.alive) return;
+    if (!B || B.over || !a.alive || !d.alive || !attackTargets(a).includes(d)) return;
     const dmg = calcDamage(a, d);
     // 원거리(궁병·사거리 밖)는 화살 세례, 근접은 칼자국 연출
     const ranged = a.branch === '궁병' || mdist(a, d) > 1;
     // 반격 피해 — 상대가 이 공격으로 전멸·도주해도 적용되도록
     // 공격 전 전력으로 미리 계산해 둔다
     // 혼란 상태의 부대는 반격할 수 없다
-    const counterOk = a.branch !== '궁병' && mdist(a, d) === 1;
+    const counterOk = a.branch !== '궁병' && meleeReachable(d, a);
     const noCounter = counterOk && (d.confused > 0 || d.confusedNow);
     const fortCover = B.terrain[a.y][a.x] === 3;
     const back = (counterOk && !noCounter)
@@ -1041,7 +1060,7 @@ const Battle = (function () {
     const foes = attackTargets(u);
     if (!foes.length) return false;
     const weak = foes.slice().sort((a, b) => a.troops - b.troops)[0];
-    const adj = foes.filter(x => mdist(x, u) === 1 && !x.noOfficer);
+    const adj = duelTargets(u);
     if (adj.length && !u.dueled && !u.noOfficer && Math.random() < 0.35 && u.officer.wu > adj[0].officer.wu + 5) {
       doDuel(u, adj[0]);
       return true;
@@ -1451,6 +1470,7 @@ const Battle = (function () {
       })),
       tiles: B.terrain.flatMap((row, y) => row.map((terrain, x) => ({
         x, y, terrain: ['평지', '숲', '산', '성', '물', '여울'][terrain],
+        fords: fordDirections(x,y),
         passable: terrain !== WATER, fortOwner: terrain === 3 ? fortOwner(x, y) : null,
         action: actions.get(x + ',' + y) || null
       }))),
@@ -1470,6 +1490,7 @@ const Battle = (function () {
       Array.from({ length: ROWS }, (_, y) => '<tr>' + state.tiles.filter(t => t.y === y).map(t => {
         const u = state.units.find(u => u.x === t.x && u.y === t.y);
         const label = '(' + t.x + ',' + t.y + ') ' + t.terrain +
+          (t.fords.length ? ' · '+t.fords.join('·')+' 여울로 도하 가능' : '') +
           (t.fortOwner ? ' · ' + (t.fortOwner === 'atk' ? '공격군' : '수비군') + ' 점유' : '') +
           (u ? ' · ' + (u.side === B.playerSide ? '아군 ' : '적군 ') + u.name + ' 병력 ' + u.troops +
             ' 사기 ' + u.morale + (u.acted ? ' 행동 완료' : '') + (u.confused ? ' 혼란' : '') : '') +
@@ -2181,6 +2202,9 @@ const Battle = (function () {
         else if (t === FORD) drawFord(px, py, x, y);
       }
     }
+    B.geo.edgeFords.forEach(c=>drawFordBed(
+      (c.from.x+c.to.x+1)*TILE*.5,(c.from.y+c.to.y+1)*TILE*.5,
+      c.axis==='x',-.6,.6,c.from.x,c.from.y));
   }
 
   // 장식은 통행 판정을 바꾸지 않고 부대보다 낮은 대비로 그린다.
@@ -2449,13 +2473,17 @@ const Battle = (function () {
     const horizontal=route ? route.axis==='x' : crossing(x-1,y)||crossing(x+1,y)||(!crossing(x,y-1)&&!crossing(x,y+1)&&dry(x-1,y)&&dry(x+1,y));
     const index=route ? route.cells.findIndex(p=>p.x===x&&p.y===y) : -1;
     const start=route&&index===0?-1:-.5, end=route&&index===route.cells.length-1?1:.5;
+    drawFordBed(px+TILE*.5,py+TILE*.5,horizontal,start,end,x,y);
+  }
+
+  function drawFordBed(cx, cy, horizontal, start, end, x, y) {
     ctx.save();
     // The shallow bed reaches both banks, but its paint stays inside the actual water outline.
     ctx.beginPath();
     B.geo.rivers.concat(B.geo.lakes).forEach(r=>{
       r.polygon.forEach((p,i)=>{if(i)ctx.lineTo(p[0]*TILE,p[1]*TILE);else ctx.moveTo(p[0]*TILE,p[1]*TILE);});ctx.closePath();
     });
-    ctx.clip();ctx.translate(px+TILE*.5,py+TILE*.5);
+    ctx.clip();ctx.translate(cx,cy);
     if(!horizontal) ctx.rotate(Math.PI/2);
     const bed=lg(0,-TILE*.26,0,TILE*.26,[[0,'rgba(134,171,154,0)'],[.25,'rgba(156,181,151,.27)'],[.52,'rgba(189,190,147,.52)'],[.78,'rgba(145,176,152,.25)'],[1,'rgba(134,171,154,0)']]);
     ctx.fillStyle=bed;
