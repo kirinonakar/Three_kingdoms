@@ -2589,8 +2589,8 @@ function renderCityPanel() {
       (noCmd ? ' disabled title="명령권이 부족합니다"' : ' title="이 도시로 출진합니다 (명령 1)"') +
       ' onclick="Game.cmdAttackFrom(\'' + c.name + '\')"><i class="ico">攻</i><span>이 도시 공격</span></button></div></div></div>';
   }
-  h += '<div class="city-cols"><div class="city-col">' + colA + '</div><div class="city-col">' + colB + '</div></div>' + dock;
-  el.innerHTML = h;
+  h += '<div class="city-cols"><div class="city-col">' + colA + '</div><div class="city-col">' + colB + '</div></div>';
+  el.innerHTML = '<div class="city-details">' + h + '</div>' + dock;
 }
 
 /* 로그 문구로 효과음을 고른다 — 명령 결과가 전황 기록에 남을 때 소리가 난다 */

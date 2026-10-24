@@ -225,6 +225,8 @@ const Battle = (function () {
         '</div>' +
         '<div class="battle-body">' +
           '<div class="battle-map">' +
+            '<div id="bMapScore" class="bscore battle-map-score" role="status" aria-label="전장 병력 현황"></div>' +
+            '<div id="bMapReinfInfo" class="bh-reinf battle-map-reinf" role="status" aria-label="원군 진군 현황"></div>' +
             '<div class="battle-geography"><div><b>' + B.geo.region + ' · '+B.geo.site+'</b><span>' + (B.opts.siege?B.geo.detail:B.geo.tactics) + '</span></div><span class="north">↑ 북</span></div>' +
             '<div class="battle-viewport" id="bViewport"><canvas id="battleCanvas" aria-label="' + B.opts.city.name + ' 전술 전장" width="' + (COLS * TILE) + '" height="' + (ROWS * TILE) + '"></canvas>' +
               '<details id="bMinimap" class="minimap-panel battle-minimap" open><summary>전장 미니맵<span class="minimap-fold" aria-hidden="true"></span></summary>' +
@@ -238,9 +240,8 @@ const Battle = (function () {
           '</div>' +
           '<div class="battle-side">' +
             '<div id="bScore" class="bscore"></div>' +
-            '<div id="bUnit"></div>' +
-            '<div id="bActs"></div>' +
-            '<div id="bLog"></div>' +
+            '<div class="battle-details"><div id="bUnit"></div><div id="bLog"></div></div>' +
+            '<div class="battle-commands"><div id="bActs"></div>' +
             '<div class="battle-foot">' +
               '<button id="bReinf" onclick="Battle.act(\'reinforce\')">원군</button>' +
               '<button id="bAuto" onclick="Battle.act(\'auto\')">자동 진행</button>' +
@@ -248,7 +249,7 @@ const Battle = (function () {
                 '<button id="bRetreat" onclick="Battle.act(\'retreat\')"' +
                   (B.playerSide === 'def' ? ' title="잔존 병력을 이끌고 다른 도시로 후퇴"' : '') + '>후퇴</button>' : '') +
               '<button id="bNext" onclick="Battle.act(\'nextTurn\')" title="남은 부대를 대기시키고 다음 턴으로">다음 턴 ▶</button>' +
-            '</div>' +
+            '</div></div>' +
           '</div>' +
         '</div>' +
         '<div id="bUnitTooltip" class="battle-unit-tooltip" role="tooltip" hidden></div>' +
@@ -2880,15 +2881,23 @@ const Battle = (function () {
           ' (잔여 ' + commas(B.supply[B.playerSide].food) + ')' : '');
     }
     const rinfo = $('bReinfInfo');
-    if (rinfo) rinfo.innerHTML = reinfStrip();
+    const mapRinfo = $('bMapReinfInfo');
+    if (rinfo || mapRinfo) {
+      const reinforcements = reinfStrip();
+      if (rinfo) rinfo.innerHTML = reinforcements;
+      if (mapRinfo) mapRinfo.innerHTML = reinforcements;
+    }
     const me = B.playerSide, foe = me === 'atk' ? 'def' : 'atk';
     const score = $('bScore');
-    if (score) {
+    const mapScore = $('bMapScore');
+    if (score || mapScore) {
       const cMe = (B.opts[me] || {}).color || '#8b9a8e';
       const cFoe = (B.opts[foe] || {}).color || '#8b9a8e';
-      score.innerHTML =
+      const scoreHTML =
         '<div class="scard" style="--c:' + cMe + '"><span class="k">내 군</span><b>' + commas(troopsOf(me)) + '</b><span class="n">' + alive(me).length + '부대</span></div>' +
         '<div class="scard" style="--c:' + cFoe + '"><span class="k">적군</span><b>' + commas(troopsOf(foe)) + '</b><span class="n">' + alive(foe).length + '부대</span></div>';
+      if (score) score.innerHTML = scoreHTML;
+      if (mapScore) mapScore.innerHTML = scoreHTML;
     }
     const u = selUnit();
     const el = $('bUnit');
