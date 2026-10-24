@@ -69,7 +69,7 @@ const Battle = (function () {
       opts, cityDef: opts.siege && opts.city ? (opts.city.def ?? 50) : 0,
       round: 1, maxRound: 15, over: false, auto: !!opts.auto,
       playerSide: opts.playerSide, side: 'atk', sel: null, autoSel: false, mode: 'select', strat: null,
-      log: [], floats: [], fx: [], busy: false, duelRequest: null, units: [], terrain: [], pending: [], supply: null, supplyRound: 0
+      log: [], floats: [], fx: [], busy: false, duelRequest: null, aiVolleyPlan: null, units: [], terrain: [], pending: [], supply: null, supplyRound: 0
     };
     // 도시별 지리 약도에서 하천·산지·숲·성곽 생성
     B.geo = buildTerrain(opts.city || { name: opts.atk.name, x: 560, y: 360 }, !!opts.siege, opts.approach);
@@ -449,6 +449,7 @@ const Battle = (function () {
     if(typeof Sound!=='undefined' && Sound.setScene) Sound.setScene({tension:Math.min(1,(B.round-1)/10)});
     if (!B || B.over) return;
     if (B.round > B.maxRound) { timeUp(); return; }
+    B.aiVolleyPlan = null;
     B.log.push('── ' + B.round + '라운드 ──');
     B.units.forEach(u => {
       u.acted = false;
@@ -1089,7 +1090,7 @@ const Battle = (function () {
   }
 
   /* ── AI 행동 ───────────────────────────────────────── */
-  /* 상황별 진형 — 성을 지키면 방원, 궁병은 학익, 기병은 봉시, 보병은 거리에 맞춘다 */
+  /* 상황별 진형 — 성을 지키면 방원, 궁병은 학익, 기병은 봉시, 보병 안행은 시간 부족 시에만 */
   function aiFormFor(u) {
     if (!u || u.noOfficer) return null;
     const foeAt = r => B.units.some(x => x.alive && x.side !== u.side && mdist(u, x) <= r);
@@ -1099,9 +1100,21 @@ const Battle = (function () {
     if (onFort) return '방원';                                   // 성을 내주지 않는 방패진
     if (u.branch === '기병') return '봉시';                       // 돌격·기동
     if (adjacent) return '방원';                                 // 보병 접근전
-    const far = B.units.filter(x => x.alive && x.side !== u.side)
-      .reduce((m, x) => Math.min(m, mdist(u, x)), 99);
-    return far > BRANCHES['보병'].mov + 1 ? '안행' : '어린';      // 멀면 행군형, 사거리 안이면 쐐기
+    return aiNeedsMarch(u) ? '안행' : '어린';
+  }
+  function aiNeedsMarch(u) {
+    // 남은 시간 안에 접근할 수 있다면 공격 진형을 유지한다. 이동을 마친 뒤에는 전환하지 않는다.
+    if (u.form === '안행' || u.formFreeUsed || u.moved) return false;
+    const turns = B.maxRound - B.round + 1;
+    const normal = BRANCHES[u.branch].mov + ((FORMS[u.form] || {}).mov || 0);
+    const march = BRANCHES[u.branch].mov + FORMS['안행'].mov;
+    if (turns <= 0 || normal <= 0 || march <= normal) return false;
+    const distance = alive(u.side === 'atk' ? 'def' : 'atk').filter(e => !e.dying).reduce((nearest, e) => {
+      const field = costField(u, e.x, e.y);
+      const approach = Math.max(0, field[u.y * COLS + u.x] - CombatRules.moveCost(u.branch, B.terrain[e.y][e.x]));
+      return Math.min(nearest, approach);
+    }, Infinity);
+    return Number.isFinite(distance) && Math.ceil(distance / normal) > turns && Math.ceil(distance / march) <= turns;
   }
   /* 진형 전환 — 라운드당 1회. 부대마다 첫 전환은 무료, 이후에는 행동을 쓴다 (플레이어와 같은 규칙) */
   function aiSwitchForm(u) {
@@ -1128,6 +1141,7 @@ const Battle = (function () {
       afterAction();
       return;
     }
+    if (aiExecuteVolleyPlan(u)) return;
     if (aiSwitchForm(u)) { afterAction(); return; }   // 행동을 써서 진형을 바꾼 경우 이번 턴 종료
     // 성 임무 — 성에서 응전하거나, 안전하게 닿을 수 있는 궁병을 요격한다.
     const duty = fortDuty(u);
@@ -1218,13 +1232,28 @@ const Battle = (function () {
   // 난수를 소모하지 않고 모든 후보를 비교한다. 동료 평가에서는 연계를 재귀 평가하지 않는다.
   function aiBestAction(u, coordinated = true) {
     if (!B || B.over || !u || !u.alive || u.dying || u.acted || isConfused(u)) return null;
-    let best = null;
+    let best = null, fallbackAttack = null;
     const offer = (type, target, score) => {
+      if (STRATS.includes(type)) {
+        // 라운드가 지나도 직전 계략과 대상이 모두 같으면 반복하지 않는다.
+        // 대상은 이동·동명이인에 영향받지 않는 전투 부대 인덱스로 구분한다.
+        if (u.aiLastStratType === type && B.units[u.aiLastStratTarget] === target) return;
+        // 직접 공격을 기본으로 삼는다. 계략은 확실한 효과가 있을 때만 대체한다.
+        // 실패한 시도도 다음 라운드까지 재사용하지 않아 계략만 반복하지 않는다.
+        const emergencyRally = type === '고무' && target.morale <= 20 && target.troops >= 1000 &&
+          Math.round(18 * tacticalScale(u)) >= 8;
+        if (!emergencyRally && u.aiStratRound != null && B.round - u.aiStratRound <= 1) return;
+        score *= emergencyRally ? 1 : .6;
+      }
       if (Number.isFinite(score) && score > 0 && (!best || score > best.score)) best = { type, target, score };
     };
     const valid = d => !d.dying && d.troops > 0 && d.morale > 0;
     const foes = attackTargets(u).filter(valid);
-    for (const d of foes) offer('attack', d, aiAttackScore(u, d));
+    for (const d of foes) {
+      const score = aiAttackScore(u, d);
+      offer('attack', d, score);
+      if (!fallbackAttack || score > fallbackAttack.score) fallbackAttack = { type: 'attack', target: d, score };
+    }
     if (u.branch === '궁병' && fireLeft(u) > 0) for (const d of foes) {
       const direct = calcDamage(u, d, 1) * FIRE_ARROW_RATE * (B.terrain[d.y][d.x] === 1 ? 1.5 : 1);
       const rate = FIRE_BURN_RATE * tacticalScale(u) * (B.terrain[d.y][d.x] === 3 ? .5 : 1);
@@ -1238,19 +1267,21 @@ const Battle = (function () {
     }
     if (!u.noOfficer) {
       for (const d of stratTargets(u, '고무').filter(valid)) {
-        if (d.morale >= 65) continue;
+        if (d.morale > 50 || !B.units.some(e => valid(e) && e.alive && e.side !== d.side && mdist(e, d) <= 3)) continue;
         offer('고무', d, aiRallyScore(u, d, Math.min(100 - d.morale, Math.round(18 * tacticalScale(u)))));
       }
       for (const d of stratTargets(u, '화계').filter(valid)) {
-        offer('화계', d, stratChance(u, d, '화계') * aiImpact(d, stratFireDamage(u, d, 250), 8.5 * tacticalScale(u)));
-        if (isConfused(d)) continue;
+        const fireChance = stratChance(u, d, '화계');
+        if (fireChance > .6) offer('화계', d, fireChance * aiImpact(d, stratFireDamage(u, d, 250), 8.5 * tacticalScale(u)));
+        const confuseChance = stratChance(u, d, '혼란');
+        if (isConfused(d) || confuseChance <= .6) continue;
         // 혼란은 행동 봉쇄와 아군의 안전한 후속 공격을 함께 평가한다.
         const duration = Math.min(2 - confuseEscape(d), B.maxRound - B.round + (d.acted ? 0 : 1));
         const victims = alive(u.side).filter(a => valid(a) && mdist(a, d) <= BRANCHES[d.branch].mov + BRANCHES[d.branch].range);
         const threat = victims.reduce((max, a) => Math.max(max, calcDamage(d, a, 1)), 0);
         const followup = victims.filter(a => a !== u && !a.acted && !isConfused(a) && meleeReachable(a, d))
           .reduce((sum, a) => sum + aiCounterCost(a, d), 0);
-        offer('혼란', d, stratChance(u, d, '혼란') * (threat * duration * .8 + followup));
+        offer('혼란', d, confuseChance * (threat * duration * .5 + followup));
       }
       for (const d of duelTargets(u).filter(valid)) {
         const scores = aiDuelScores(u, d);
@@ -1278,7 +1309,9 @@ const Battle = (function () {
       const opportunity = mates.reduce((sum, a) => sum + (aiBestAction(a, false)?.score || 0), 0);
       offer('volley', d, aiImpact(d, damage, 8.5 * scale) - opportunity - damage * .03);
     }
-    return best;
+    // 전부 불리한 교환이어도 공격할 수 있으면 대기하지 않고 평가가 가장 높은 대상을 친다.
+    // 기본 공격의 평가 하한을 0으로 두어 이동·연계 평가에서도 대기를 대안으로 삼지 않는다.
+    return best || (fallbackAttack && { ...fallbackAttack, score: 0 });
   }
   function tryAct(u) {
     const action = aiBestAction(u);
@@ -1289,16 +1322,127 @@ const Battle = (function () {
     else if (type === 'charge') doCharge(u, target);
     else if (type === 'volley') doVolley(u, target);
     else if (type === 'duel') doDuel(u, target);
-    else doStratAct(u, target, type);
+    else {
+      u.aiStratRound = B.round;
+      u.aiLastStratType = type;
+      u.aiLastStratTarget = B.units.indexOf(target);
+      doStratAct(u, target, type);
+    }
     return true;
   }
   function aiNextUnit(units) {
+    const pending = aiVolleyPlanStep();
+    if (pending && units.includes(pending.unit)) return pending.unit;
     let best = units[0], score = 0;
     for (const u of units) {
       const action = aiBestAction(u);
       if (action && action.score > score) { best = u; score = action.score; }
     }
+    const plan = aiPlanVolley(units);
+    if (plan && plan.score > score) {
+      B.aiVolleyPlan = plan;
+      return plan.steps[0].unit;
+    }
     return best;
+  }
+  function aiVolleyReady(u) {
+    return u && u.alive && !u.dying && !u.acted && !isConfused(u) && u.troops > 0 && u.morale > 0 &&
+      (u.branch === '보병' || u.branch === '기병') && volleyLeft(u) > 0;
+  }
+  function aiVolleyPositions(u, target) {
+    const current = meleeReachable(u, target) ? [{ x: u.x, y: u.y }] : [];
+    if (u.moved) return current;
+    const duty = fortDuty(u);
+    if (duty && duty.hold) return current;
+    const field = duty && !duty.sortie ? costField(u, duty.fort.x, duty.fort.y) : null;
+    return current.concat(moveRange(u).filter(point => meleeReachable(point, target) &&
+      (!duty || !duty.sortie || point.x === duty.sortie.x && point.y === duty.sortie.y) &&
+      (!field || field[point.y * COLS + point.x] <= field[u.y * COLS + u.x])));
+  }
+  // 선행 부대는 이동만 하고, 보병 지휘 부대가 합류한 뒤 같은 턴에 일제공격한다.
+  function aiPlanVolley(units) {
+    const ready = units.filter(aiVolleyReady);
+    if (ready.length < 2) return null;
+    const originalSolo = new Map(ready.map(u => [u, aiBestAction(u, false)?.score || 0]));
+    let best = null;
+    const foes = B.units.filter(e => e.alive && !e.dying && e.side !== ready[0].side && e.troops > 0 && e.morale > 0);
+    for (const leader of ready.filter(u => u.branch === '보병')) for (const mate of ready) {
+      if (mate === leader) continue;
+      const leaderStart = { x: leader.x, y: leader.y, moved: leader.moved };
+      const mateStart = { x: mate.x, y: mate.y, moved: mate.moved };
+      const exposure = aiExposure(leader, leader) + aiExposure(mate, mate);
+      for (const target of foes) {
+        const matePositions = aiVolleyPositions(mate, target);
+        for (const mp of matePositions) {
+          try {
+            Object.assign(mate, mp, { moved: mateStart.moved || mp.x !== mateStart.x || mp.y !== mateStart.y });
+            const leaderPositions = aiVolleyPositions(leader, target);
+            for (const lp of leaderPositions) {
+              Object.assign(leader, lp, { moved: leaderStart.moved || lp.x !== leaderStart.x || lp.y !== leaderStart.y });
+              const steps = [];
+              if (mp.x !== mateStart.x || mp.y !== mateStart.y) steps.push({ unit: mate, dest: mp });
+              if (lp.x !== leaderStart.x || lp.y !== leaderStart.y) steps.push({ unit: leader, dest: lp });
+              if (!steps.length) continue; // 이미 인접한 부대의 연계는 aiBestAction에서 처리한다.
+              const partners = volleyPartners(leader, target);
+              if (!partners.includes(mate) || partners.some(a => !aiVolleyReady(a))) continue;
+              const group = [leader, ...partners];
+              const damage = calcDamage(leader, target, 1) + partners.reduce((sum, a) => sum + calcDamage(a, target, 1) * VOLLEY_RATE, 0);
+              const impact = Math.min(1, group.reduce((sum, a) => sum + a.troops, 0) / 1000);
+              const solo = group.map(a => Math.max(originalSolo.get(a) || 0, aiBestAction(a, false)?.score || 0));
+              const joint = aiImpact(target, damage, 8.5 * impact) - damage * .03;
+              const risk = Math.max(0, aiExposure(leader, leader) + aiExposure(mate, mate) - exposure) * .2;
+              const advantage = joint - solo.reduce((sum, value) => sum + value, 0) - risk;
+              const score = joint - solo.slice(1).reduce((sum, value) => sum + value, 0) - risk;
+              if (advantage <= Math.max(40, joint * .05) || best && score <= best.score) continue;
+              steps.push({ unit: leader });
+              best = { side: leader.side, round: B.round, leader, mate, target, targetX: target.x, targetY: target.y,
+                starts: [{ unit: leader, ...leaderStart }, { unit: mate, ...mateStart }], steps, next: 0, score };
+            }
+          } finally {
+            Object.assign(leader, leaderStart);
+            Object.assign(mate, mateStart);
+          }
+        }
+      }
+    }
+    return best;
+  }
+  function aiVolleyPlanStep() {
+    const plan = B && B.aiVolleyPlan;
+    if (!plan) return null;
+    const cancel = () => { B.aiVolleyPlan = null; return null; };
+    if (plan.round !== B.round || plan.side !== B.side || !aiVolleyReady(plan.leader) || !aiVolleyReady(plan.mate) ||
+      !plan.target.alive || plan.target.dying || plan.target.side === plan.side || plan.target.troops <= 0 || plan.target.morale <= 0 ||
+      plan.target.x !== plan.targetX || plan.target.y !== plan.targetY) return cancel();
+    for (const start of plan.starts) {
+      const completed = plan.steps.slice(0, plan.next).find(step => step.unit === start.unit && step.dest);
+      const expected = completed ? completed.dest : start;
+      if (start.unit.x !== expected.x || start.unit.y !== expected.y) return cancel();
+    }
+    const step = plan.steps[plan.next];
+    if (!step) return cancel();
+    if (step.dest) {
+      if (step.unit.moved || !moveRange(step.unit).some(p => p.x === step.dest.x && p.y === step.dest.y)) return cancel();
+    } else if (!volleyPartners(plan.leader, plan.target).includes(plan.mate)) return cancel();
+    return step;
+  }
+  function aiExecuteVolleyPlan(u) {
+    const step = aiVolleyPlanStep();
+    if (!step || step.unit !== u) return false;
+    const plan = B.aiVolleyPlan;
+    if (!step.dest) {
+      B.aiVolleyPlan = null;
+      doVolley(plan.leader, plan.target);
+      return true;
+    }
+    moveUnitTo(u, step.dest.x, step.dest.y);
+    u.moved = true;
+    plan.next++;
+    syncForts(true);
+    bLog('🚩 ' + u.name + ' 부대가 일제공격 합류 위치로 이동 — 공격 행동 유지');
+    if (checkForts()) return true;
+    afterMoveAnim(u, () => { if (B && !B.over) afterAction(); });
+    return true;
   }
   // 공격이 닿지 않을 때는 이동 뒤의 특수공격·연계와 노출 위험으로 위치를 고른다.
   function aiMoveToAction(u, current = null) {
@@ -1392,8 +1536,8 @@ const Battle = (function () {
     return opts[0] ? { hold: false, fort: opts[0] } : null;
   }
 
-  // 목표 칸까지의 이동 비용 지도 — 강·호수는 여울로만 건너고, 부대는 장애물로 보지 않는다
-  function costField(u, tx, ty) {
+  // 목표 칸까지의 이동 비용 지도. 실제 이동 판단은 적 점유를 반영하고, 지형 거리 추정은 생략할 수 있다.
+  function costField(u, tx, ty, respectEnemies = false) {
     const N = COLS * ROWS, cost = new Array(N).fill(Infinity);
     if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return cost;
     cost[ty * COLS + tx] = 0;
@@ -1410,6 +1554,9 @@ const Battle = (function () {
         if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS || done[ny * COLS + nx]) return;
         const t = B.terrain[ny][nx];
         if (t === WATER) return;                     // 여울이 아니면 강을 건널 수 없다
+        const occ = respectEnemies && unitAt(nx, ny);
+        // 공격 목표 자체에는 접근할 수 있지만 다른 적을 통과하는 경로는 만들지 않는다.
+        if (occ && occ.side !== u.side && (nx !== tx || ny !== ty)) return;
         // 역방향 탐색이므로 현재 칸에 진입하는 비용을 더한다.
         const nd = cost[cur] + CombatRules.moveCost(u.branch,B.terrain[cy][cx]);
         if (nd < cost[ny * COLS + nx]) cost[ny * COLS + nx] = nd;
@@ -1418,25 +1565,35 @@ const Battle = (function () {
     return cost;
   }
 
+  function movementField(u, tx, ty) {
+    let field = costField(u, tx, ty, true);
+    const here = u.y * COLS + u.x;
+    if (Number.isFinite(field[here])) return field;
+    const terrain = costField(u, tx, ty);
+    if (!Number.isFinite(terrain[here])) return field;
+    // 모든 통로가 적에게 막혔다면 목표까지 가는 길의 첫 적 앞으로 집결한다.
+    // 아군 위로는 지나갈 수 있어도 착지는 못 하므로, 앞자리가 차 있으면 후방에서 멈춘다.
+    let distance = Infinity;
+    for (const e of B.units.filter(e => e.alive && !e.dying && e.side !== u.side && e.troops > 0 && e.morale > 0)) {
+      if (!Number.isFinite(terrain[e.y * COLS + e.x])) continue;
+      const approach = costField(u, e.x, e.y, true);
+      const total = approach[here] + terrain[e.y * COLS + e.x];
+      if (total < distance) { distance = total; field = approach; }
+    }
+    return field;
+  }
+
   // 지정한 칸을 향해 최단 경로를 따라 한 번 이동한다 (행동을 소모하지 않음)
   function moveStepToward(u, tx, ty, msg) {
     const rng = moveRange(u);
     if (!rng.length) return false;
     // 맨해튼 거리만 줄이면 여울 쪽으로 돌아가야 할 때 제자리에 멈춘다 — 경로 거리로 한 칸씩 나아간다
-    const field = costField(u, tx, ty), dist = p => field[p.y * COLS + p.x];
+    const field = movementField(u, tx, ty), dist = p => field[p.y * COLS + p.x];
     const self = field[u.y * COLS + u.x];
     let best = null, bd = Infinity;
     rng.forEach(p => { const d = dist(p); if (d < bd) { bd = d; best = p; } });
-    if (best && !(bd < self)) best = null;           // 더 가까워지는 칸이 없으면 제자리
-    if (!best) {
-      // 경로가 막혔으면(강 건너 고립 등) 눈앞의 거리라도 줄인다
-      bd = Infinity;
-      rng.forEach(p => {
-        const d = Math.abs(p.x - tx) + Math.abs(p.y - ty);
-        if (d < bd) { bd = d; best = p; }
-      });
-      if (!best || bd >= Math.abs(u.x - tx) + Math.abs(u.y - ty)) return false;
-    }
+    // 경로가 가까워지지 않으면 이동하지 않는다. 직선 거리로 후퇴하면 다음 턴에 다시 돌아오게 된다.
+    if (!best || !(bd < self)) return false;
     moveUnitTo(u, best.x, best.y);
     u.moved = true;
     syncForts(true);              // 성에 올라서면 깃발이 그 편으로 바뀐다

@@ -182,9 +182,10 @@ assert.equal(d.burn, 1); assert.equal(d.burnRate, .05);
 // Tiny strategists must also have reduced hostile success chance, not only reduced damage.
 b = setup([unit('A', 100)], [unit('D', 10000)]); a = b.units[0]; d = b.units[1];
 random = () => .1; p.doStratAct(a, d, '혼란'); assert.equal(d.confused, 0);
-// AI uses range-three spells even when no enemy is in its normal melee range.
+// AI uses a reliable range-three spell even when no enemy is in its normal melee range.
 random = () => 0;
 b = setup(); a = b.units[0]; d = b.units[1]; d.x = a.x + 3;
+a.officer.zhi = 100; d.officer.zhi = 50; d.confused = 1;
 assert(p.tryAct(a)); assert(d.troops < 3000, 'AI ignores legal range-three fire');
 // Inspiration must obey the same range for AI and player.
 b = setup([unit('A', 3000), unit('ally', 3000)]); a = b.units[0]; d = b.units[1];

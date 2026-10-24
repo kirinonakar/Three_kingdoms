@@ -268,6 +268,8 @@ Battle.start({
     check(Bm.log.some(l => l.indexOf(a.name + ' → ' + d.name) >= 0), '이동후공격: 공격이 실행되지 않음');
     check(d.troops < before || !d.alive, '이동후공격: 피해가 없음');
   }
+  // 반격 AI가 일기토를 신청한 경우 응답을 마쳐야 자동 진행을 켤 수 있다.
+  if (Battle.state && Battle.state.duelRequest) Battle.act('duelAccept');
   if (Battle.state && !Battle.state.over) Battle.act('auto');
   check(Battle.state === null, '이동후공격: 전투 상태 미정리');
 }
