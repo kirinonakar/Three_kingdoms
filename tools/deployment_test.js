@@ -42,7 +42,7 @@ const sandbox = { console,
 sandbox.window = sandbox; vm.createContext(sandbox);
 vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js'].map(f => fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8')).join('\n'), sandbox);
 const { Game } = sandbox;
-function fixture(troops = 1201) {
+function fixture(troops = 3201) {
   starts = []; reinforcements = []; Game.startNew('cao');
   const g = Game.state;
   const namesAt = city => g.officers.filter(o => o.city === city && o.faction === 'cao' && o.status === 'active').map(o => o.name);
@@ -60,9 +60,17 @@ function input(id, value) {
 }
 let f = fixture();
 Game.openDeploy(f.source.name, f.target.name, f.names.join('|'));
+assert.equal(Number(els.tr_0.value) + Number(els.tr_1.value), 1201);
+assert.equal(els.deployTotal_0.textContent, '편성 1,201 · 잔여 2,000');
+Game.confirmDeploy(); assert.equal(starts.length, 1); assert.equal(f.source.troops, 2000);
+f = fixture(1201);
+Game.openDeploy(f.source.name, f.target.name, f.names.join('|'));
 assert(modalHTML.includes('현재 병력 1,201</b>'));
 assert(!modalHTML.includes('1,201 /'));
-assert.equal(Number(els.tr_0.value) + Number(els.tr_1.value), 1201);
+assert.equal(Number(els.tr_0.value) + Number(els.tr_1.value), 0);
+const emptyCommands = f.g.cmd;
+Game.confirmDeploy(); assert.equal(starts.length, 0); assert.equal(f.g.cmd, emptyCommands);
+input('tr_1', 600);
 const originalInput = els.tr_0, originalModal = modalHTML;
 input('tr_0', 100);
 assert.equal(Game.state.ui.deploy.amounts[f.names[0]], 100);
@@ -83,9 +91,11 @@ assert.equal(els.tr_0.value, '1201'); assert.equal(els.tr_1.value, '0');
 Game.confirmDeploy(); assert.equal(starts.length, 1); assert.equal(f.source.troops, 0);
 assert.equal(starts[0].atk.units.reduce((sum, u) => sum + u.troops, 0), 1201);
 
-// Default allocations must not invent a minimum 100 troops for each officer.
-f = fixture(3); Game.openDeploy(f.source.name, f.target.name, f.names.join('|'));
-assert.equal(Number(els.tr_0.value) + Number(els.tr_1.value), 3);
+// Initial attack allocation leaves 2,000 troops, even at the reserve boundary.
+for (const troops of [3, 2000, 2003]) {
+  f = fixture(troops); Game.openDeploy(f.source.name, f.target.name, f.names.join('|'));
+  assert.equal(Number(els.tr_0.value) + Number(els.tr_1.value), Math.max(0, troops - 2000));
+}
 // The visible count is current garrison, including troops above the population cap.
 f = fixture(25000); Game.openDeploy(f.source.name, f.target.name, f.names.join('|'));
 assert(modalHTML.includes('현재 병력 25,000</b>')); assert.equal(els.tr_0.max, '10000');
@@ -94,16 +104,16 @@ assert(modalHTML.includes('현재 병력 25,000</b>')); assert.equal(els.tr_0.ma
 f = fixture(3000); f.support.troops = 800;
 Game.openDeploy(f.source.name, f.target.name, f.names.join('|')); input('tr_0', 500);
 Game.addDeployCity(f.support.name); Game.togglePick(f.supportNames[0]); Game.confirmPick();
-assert.equal(els.tr_0.value, '500'); assert.equal(els.tr_2.value, '800');
+assert.equal(els.tr_0.value, '500'); assert.equal(els.tr_2.value, '0');
 input('tr_2', 1500); assert.equal(els.tr_2.value, '800');
-assert.equal(els.deployTotal_0.textContent, '편성 2,000 · 잔여 1,000');
+assert.equal(els.deployTotal_0.textContent, '편성 1,000 · 잔여 2,000');
 assert.equal(els.deployTotal_1.textContent, '편성 800 · 잔여 0');
 Game.removeDeployCity(f.support.name); assert.equal(els.tr_0.value, '500');
 assert.equal(f.g.ui.deploy.parts.length, 1);
 Game.addDeployCity(f.support.name); Game.togglePick(f.supportNames[0]); Game.confirmPick();
 assert.equal(els.tr_0.value, '500'); assert.equal(els.tr_2.value, '800');
-Game.confirmDeploy(); assert.equal(f.source.troops, 1000); assert.equal(f.support.troops, 0);
-assert.equal(starts[0].atk.units.reduce((sum, u) => sum + u.troops, 0), 2000);
+Game.confirmDeploy(); assert.equal(f.source.troops, 2000); assert.equal(f.support.troops, 0);
+assert.equal(starts[0].atk.units.reduce((sum, u) => sum + u.troops, 0), 1000);
 assert.equal(reinforcements[0].units[0].troops, 800);
 
 // Defense uses the same live limits and reports unassigned troops as reserve.

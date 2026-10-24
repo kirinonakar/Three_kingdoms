@@ -3081,7 +3081,7 @@ function renderDeploy() {
   d.parts.forEach((p, pi) => {
     const c = G.cities[p.city];
     let remaining = c.troops;
-    const defaults = distribute(c.troops, p.names.length);
+    const defaults = distribute(Math.max(0, c.troops - 2000), p.names.length);
     body += '<div class="sec"><span>' + p.city + ' 합류 부대</span><b>현재 병력 ' +
       commas(c.troops) + '</b></div><p class="muted" id="deployTotal_' + pi + '" aria-live="polite"></p>';
     p.names.forEach((n, ni) => {

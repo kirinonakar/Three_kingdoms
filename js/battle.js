@@ -2965,7 +2965,9 @@ const Battle = (function () {
     }
     const autoBtn = $('bAuto');
     if (autoBtn) autoBtn.disabled = B.over;
-    if (autoBtn) autoBtn.textContent = B.auto ? '⏸ 자동 멈춤' : '⏩ 자동 진행';
+    if (autoBtn) autoBtn.innerHTML = '<svg class="auto-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="' +
+      (B.auto ? 'M4 3h3v10H4zM9 3h3v10H9z' : 'M1 3v10l7-5zM8 3v10l7-5z') +
+      '"></path></svg>' + (B.auto ? '자동 멈춤' : '자동 진행');
     const nextBtn = $('bNext');
     if (nextBtn) {
       const left = B.units.filter(x => x.alive && x.side === B.playerSide && !x.acted).length;
