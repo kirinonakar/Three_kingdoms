@@ -70,6 +70,17 @@ function clickTile(x, y) {
   const r = el.getBoundingClientRect();
   if (el && el.handlers.click) el.handlers.click({ clientX: r.left + (x + .5) * r.width / 13, clientY: r.top + (y + .5) * r.height / 9 });
 }
+function nextQuietRound(b, u) {
+  const round = b.round;
+  b.units.forEach(x => { x.acted = true; });
+  u.acted = false;
+  b.sel = u; b.side = b.playerSide; b.mode = 'select'; b.busy = false;
+  pauseTimers = false;
+  Battle.act('wait');
+  pauseTimers = true;
+  check(b.round === round + 1 && !u.acted && !u.moved, '횟수 제한: 다음 라운드 진행 실패');
+  b.sel = u;
+}
 function runBattle(tag, atkUnits, defUnits, opt) {
   let res = null, calls = 0;
   Battle.start({
@@ -204,6 +215,7 @@ check(!!Battle.state && !Battle.state.over, '수동: 전투가 시작되지 않�
 let guard = 0;
 while (Battle.state && !Battle.state.over && guard++ < 500) {
   const B = Battle.state;
+  if (B.duelRequest) { Battle.act('duelAccept'); continue; }
   if (B.side !== 'atk') break;
   const u = B.sel;
   if (!u) {
@@ -376,6 +388,7 @@ Battle.start({
   check(!!Bq, '돌격: 시작 실패');
   if (Bq) {
     Bq.terrain[3] = Array(13).fill(0);
+    Bq.geo={...Bq.geo,rivers:[],lakes:[],edgeFords:[],crossings:[]};
     const a = Bq.units.find(u => u.side === 'atk' && u.branch === '기병');
     const d = Bq.units.find(u => u.name === '이각');
     const d2 = Bq.units.find(u => u.name === '곽사');
@@ -383,12 +396,15 @@ Battle.start({
     Bq.sel = a; Bq.side = 'atk'; Bq.mode = 'select';
     pauseTimers = true;
     const before = d.troops, before2 = d2.troops;
+    check(a.charge === 2 && a.volley === 2, '돌격: 새 전투의 사용 횟수가 각각 2회가 아님');
     Battle.act('charge');
     check(Bq.mode === 'charge', '돌격: 돌격 모드로 진입하지 못함 (' + Bq.mode + ')');
     check(Battle.clickCell(7, 3) === false, '돌격: 네 번째 칸까지 허용함');
+    check(a.charge === 2, '돌격: 잘못된 목적지에 사용 횟수를 소모함');
     clickTile(6, 3);                                     // 적 2부대를 뚫고 6,3 으로 돌파
     check(a.x === 6 && a.y === 3, '돌격: 적진을 뚫고 이동하지 못함 (' + a.x + ',' + a.y + ')');
     check(a.acted === true, '돌격: 행동을 소모하지 않음');
+    check(a.charge === 1 && a.volley === 2, '돌격: 횟수 차감 또는 일제공격과의 독립성 오류');
     check(d.troops < before && d2.troops < before2, '돌격: 관통 피해가 없음');
     check(Bq.log.some(l => l.indexOf('돌격 관통') >= 0) && Bq.log.some(l => l.indexOf('2부대를 뚫고') >= 0), '돌격: 관통 로그 없음');
     check(Bq.busy && Battle.observation().busy, '행동 잠금: 후속 처리 전 busy가 설정되지 않음');
@@ -399,17 +415,31 @@ Battle.start({
     const previousForm = mate.form;
     Battle.setForm(previousForm === '방원' ? '어린' : '방원');
     check(mate.form === previousForm && !mate.acted, '행동 잠금: 다른 부대의 진형 명령을 허용함');
+    nextQuietRound(Bq, a);
+    check(a.charge === 1, '돌격: 다음 라운드에 횟수가 회복됨');
+    Battle.act('charge');
+    check(Bq.mode === 'charge' && Battle.clickCell(3, 3), '돌격: 두 번째 사용 실패');
+    check(a.charge === 0 && a.acted, '돌격: 두 번째 사용 후 잔여 횟수 오류');
+    nextQuietRound(Bq, a);
+    Battle.act('charge');
+    check(Bq.mode === 'select' && a.charge === 0, '돌격: 세 번째 명령을 허용함');
+    check(/aria-label="돌격"[^>]* disabled/.test(els.bActs.innerHTML), '돌격: 소진 후 버튼이 비활성화되지 않음');
+    Bq.mode = 'charge';
+    check(Battle.observation().tiles.every(t => t.action !== 'charge'), '돌격: 소진 후 돌격 가능 칸이 있음');
+    check(!Battle.clickCell(6, 3) && a.x === 3 && a.charge === 0, '돌격: 클릭으로 세 번째 사용이 가능함');
+    Bq.mode = 'select';
     pauseTimers = false; Bq.busy = false;
   }
   if (Battle.state && !Battle.state.over) Battle.act('auto');
   check(Battle.state === null, '돌격: 전투 상태 미정리');
 }
 
-/* 4-6) 보병 2부대 이상 일제공격 — 함께 때리고 반격받지 않는다 */
+/* 4-6) 보병이 보병·기병과 일제공격 — 함께 때리고 반격받지 않는다 */
+for (const partnerBranch of ['보병', '기병']) {
 let res9 = null;
 Battle.start({
   siege: false, city: Game.state.cities['낙양'], playerSide: 'atk', auto: false,
-  atk: { name: '조조군', color: '#4a6fd6', units: [mkU('조인', 9000, '보병'), mkU('이전', 9000, '보병')] },
+  atk: { name: '조조군', color: '#4a6fd6', units: [mkU('조인', 9000, '보병'), mkU('이전', 9000, partnerBranch)] },
   def: { name: '이각군', color: '#9a5a5a', units: [mkU('이각', 9000, '보병'), mkU('곽사', 8000, '보병')] },
   onEnd: x => { res9 = x; }
 });
@@ -423,23 +453,69 @@ Battle.start({
     const mine = Bv.units.filter(u => u.side === 'atk');
     const a = mine[0], mate = mine[1];
     const d = Bv.units.find(u => u.name === '이각');
+    d.troops = d.max = 50000;
     a.x = 4; a.y = 3; mate.x = 5; mate.y = 4; d.x = 5; d.y = 3;
     Bv.sel = a; Bv.side = 'atk'; Bv.mode = 'select';
     pauseTimers = true;
+    check(a.volley === 2 && mate.volley === 2, '일제공격: 새 전투의 참여 횟수가 2회가 아님');
+    for (const blocked of ['행동 완료', '혼란', '궁병', '비인접', '횟수 소진']) {
+      mate.acted = blocked === '행동 완료';
+      mate.confused = blocked === '혼란' ? 1 : 0;
+      mate.branch = blocked === '궁병' ? '궁병' : partnerBranch;
+      mate.x = blocked === '비인접' ? 7 : 5;
+      mate.volley = blocked === '횟수 소진' ? 0 : 2;
+      Battle.act('volley');
+      check(Bv.mode === 'select', '일제공격/' + partnerBranch + ': ' + blocked + ' 동료와 공격을 허용함');
+      check(a.volley === 2, '일제공격: 실패한 명령에 사용 횟수를 소모함');
+    }
+    mate.acted = false; mate.confused = 0; mate.branch = partnerBranch; mate.x = 5; mate.volley = 2;
+    if (partnerBranch === '기병') {
+      check(Battle.clickCell(mate.x, mate.y), '일제공격: 기병 선택 실패');
+      check(!els.bActs.innerHTML.includes('aria-label="일제공격"'), '일제공격: 기병에게 시작 버튼이 표시됨');
+      check(els.bUnit.innerHTML.includes('일제공격 참여 2회 남음'), '일제공격: 기병의 참여 전용 표시가 없음');
+      Battle.act('volley');
+      check(Bv.mode === 'select', '일제공격: 기병이 직접 명령을 시작함');
+      const beforeBlocked = d.troops;
+      Bv.mode = 'volley';
+      check(Battle.observation().tiles.every(t => t.action !== 'volley'), '일제공격: 기병이 시작할 수 있는 칸이 있음');
+      check(!Battle.clickCell(d.x, d.y) && d.troops === beforeBlocked && mate.volley === 2 && !mate.acted,
+        '일제공격: 기병의 직접 시작으로 피해 또는 횟수 소모가 발생함');
+      Bv.mode = 'select';
+      check(Battle.clickCell(a.x, a.y), '일제공격: 보병 재선택 실패');
+    }
     const before = d.troops;
+    const ownBefore = [a.troops, mate.troops];
     Battle.act('volley');
     check(Bv.mode === 'volley', '일제공격: 모드 진입 실패 (' + Bv.mode + ')');
     clickTile(d.x, d.y);
     check(d.troops < before, '일제공격: 피해가 없음');
     check(a.acted && mate.acted, '일제공격: 참가 부대의 행동이 소모되지 않음');
+    check(a.volley === 1 && mate.volley === 1, '일제공격: 참가 부대 모두 1회씩 소모해야 함');
+    if (partnerBranch === '기병') check(mate.charge === 2, '일제공격: 기병의 돌격 횟수까지 소모함');
+    check(a.troops === ownBefore[0] && mate.troops === ownBefore[1], '일제공격: 참가 부대가 반격 피해를 받음');
     check(Bv.log.some(l => l.indexOf('일제공격!') >= 0), '일제공격: 로그 없음');
     check(!Bv.log.some(l => l.indexOf(d.name + '의 반격!') >= 0), '일제공격: 반격이 발생함');
     const cue = soundEvents.filter(e => e.name === 'volley').pop();
     check(cue && cue.details && cue.details.count === 2, '일제공격: 실제 참가 부대 수가 효과음에 전달되지 않음');
+    nextQuietRound(Bv, a);
+    check(a.volley === 1 && mate.volley === 1, '일제공격: 다음 라운드에 횟수가 회복됨');
+    Battle.act('volley');
+    check(Bv.mode === 'volley' && Battle.clickCell(d.x, d.y), '일제공격: 두 번째 사용 실패');
+    check(a.volley === 0 && mate.volley === 0, '일제공격: 두 번째 참여 후 횟수 오류');
+    nextQuietRound(Bv, a);
+    const afterSecond = d.troops;
+    Battle.act('volley');
+    check(Bv.mode === 'select' && !a.acted, '일제공격: 세 번째 명령을 허용함');
+    check(/aria-label="일제공격"[^>]* disabled/.test(els.bActs.innerHTML), '일제공격: 소진 후 버튼이 비활성화되지 않음');
+    Bv.mode = 'volley';
+    check(Battle.observation().tiles.every(t => t.action !== 'volley'), '일제공격: 소진 후 공격 가능 칸이 있음');
+    check(!Battle.clickCell(d.x, d.y) && d.troops === afterSecond, '일제공격: 클릭으로 세 번째 사용이 가능함');
+    Bv.mode = 'select';
     pauseTimers = false; Bv.busy = false;
   }
   if (Battle.state && !Battle.state.over) Battle.act('auto');
   check(Battle.state === null, '일제공격: 전투 상태 미정리');
+}
 }
 
 /* 4-7) 궁병 불화살 — 사거리 2에서 불을 지르고 화상을 남긴다 */

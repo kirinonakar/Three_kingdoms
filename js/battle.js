@@ -69,7 +69,7 @@ const Battle = (function () {
       opts, cityDef: opts.siege && opts.city ? (opts.city.def ?? 50) : 0,
       round: 1, maxRound: 15, over: false, auto: !!opts.auto,
       playerSide: opts.playerSide, side: 'atk', sel: null, autoSel: false, mode: 'select', strat: null,
-      log: [], floats: [], fx: [], busy: false, units: [], terrain: [], pending: [], supply: null, supplyRound: 0
+      log: [], floats: [], fx: [], busy: false, duelRequest: null, units: [], terrain: [], pending: [], supply: null, supplyRound: 0
     };
     // 도시별 지리 약도에서 하천·산지·숲·성곽 생성
     B.geo = buildTerrain(opts.city || { name: opts.atk.name, x: 560, y: 360 }, !!opts.siege, opts.approach);
@@ -99,6 +99,8 @@ const Battle = (function () {
       training: u.training ?? 60, morale: cl(u.morale ?? 70, 20, 100),
       branch: br, form: fm,
       x: 0, y: 0, acted: false, moved: false, confused: 0, confusedNow: false, dueled: false, alive: true,
+      charge: br === '기병' ? CHARGE_MAX : 0,
+      volley: br === '보병' || br === '기병' ? VOLLEY_MAX : 0,
       fire: br === '궁병' ? FIRE_ARROWS_MAX : 0, burn: 0, burnRate: 0
     };
   }
@@ -253,6 +255,7 @@ const Battle = (function () {
           '</div>' +
         '</div>' +
         '<div id="bUnitTooltip" class="battle-unit-tooltip" role="tooltip" hidden></div>' +
+        '<div id="bDuelPrompt"></div>' +
       '</div></div>';
     cv = $('battleCanvas');
     ctx = cv.getContext('2d');
@@ -341,6 +344,9 @@ const Battle = (function () {
       (CombatRules.description(o)?'<p class="ut-skill">'+escape(CombatRules.description(o))+'</p>':'')+
       '<p>'+CombatRules.bonuses(u,alive(u.side),alive(u.side).filter(a=>mdist(a,u)<=2)).labels.join(' · ')+'</p>'+
       '<p>'+escape(BRANCHES[u.branch].desc)+'</p><p>'+escape((FORMS[u.form]||{}).desc||'')+'</p>'+
+      (u.branch==='기병'?'<p>돌격 '+chargeLeft(u)+'회 남음</p>':'')+
+      (u.branch==='보병'?'<p>일제공격 '+volleyLeft(u)+'회 남음 (시작·참여 시 1회 소모)</p>':'')+
+      (u.branch==='기병'?'<p>일제공격 참여 '+volleyLeft(u)+'회 남음 (보병이 시작할 때 참여만 가능)</p>':'')+
       (u.branch==='궁병'?'<p>불화살 '+fireLeft(u)+'회 남음</p>':'')+
       (fortAt(u.x,u.y)?'<p class="ut-skill">성 주둔 · 지형 방어 +40% · 받는 반격 피해 -25%</p>':'');
     if(el.innerHTML!==html)el.innerHTML=html;
@@ -475,7 +481,7 @@ const Battle = (function () {
   }
 
   function step() {
-    if (!B || B.over) return;
+    if (!B || B.over || B.duelRequest) return;
     if (!alive('atk').length) { end('defender'); return; }
     if (!alive('def').length) { end('attacker'); return; }
     if (checkForts()) return;
@@ -584,7 +590,7 @@ const Battle = (function () {
   }
 
   // 실제 전투 불능 처리 — 연출이 끝난 뒤 호출된다
-  function finishUnit(u) {
+  function finishUnit(u, preserveRoutTroops = false) {
     if (!u || !u.alive) return;
     u.dying = false;
     if (u.troops <= 0) {
@@ -596,7 +602,7 @@ const Battle = (function () {
       return;
     }
     if (u.morale <= 0) {
-      u.troops = Math.round(u.troops * 0.3);
+      if (!preserveRoutTroops) u.troops = Math.round(u.troops * 0.3);
       u.alive = false;
       bLog('🏳 ' + u.name + ' 부대가 도주했습니다!');
       sfx('destroy');
@@ -643,9 +649,12 @@ const Battle = (function () {
   }
 
   /* ── 기병 돌격 — 적진을 뚫고 지나간다 ───────────────── */
+  const CHARGE_MAX = 2;        // 부대당 한 전투의 돌격 사용 횟수
   const CHARGE_PIERCE = 2;      // 한 번에 뚫을 수 있는 적 부대 수
   const CHARGE_RANGE = 3;       // 돌격으로 달릴 수 있는 최대 거리(칸)
   const CHARGE_RATE = 0.35;     // 뚫은 적에게 주는 피해 비율
+
+  function chargeLeft(u) { return u && u.charge > 0 ? u.charge : 0; }
 
   // 여울 칸 안에서는 접전할 수 있지만, 양안 사이의 물길을 넘어 때릴 수는 없다.
   function meleeReachable(a, d) {
@@ -657,7 +666,7 @@ const Battle = (function () {
 
   // 돌격 착지점 — 직선으로 적을 뚫고 나간 자리
   function chargeOptions(u) {
-    if (!u || u.branch !== '기병') return [];
+    if (!u || u.branch !== '기병' || chargeLeft(u) <= 0) return [];
     if(B.terrain[u.y][u.x]!==0) return [];
     const movMax = BRANCHES['기병'].mov + ((FORMS[u.form] || {}).mov || 0);
     const range = Math.min(movMax, CHARGE_RANGE);   // 아무리 빨라도 세 칸까지만
@@ -687,12 +696,13 @@ const Battle = (function () {
     if (!B || B.over || !u || !u.alive || u.acted) return;
     const opt = chargeOptions(u).find(o => o.x === dest.x && o.y === dest.y);
     if (!opt) return;
+    u.charge = chargeLeft(u) - 1;
     moveUnitTo(u, opt.x, opt.y, true);
     u.moved = true;
     u.acted = true;
     // 돌격 관통 연출은 이동 연출이 끝난 뒤부터 차례로 터진다
     const ride = moveAnimLeft(u);
-    bLog('🐎 ' + u.name + ' 부대 돌격! 적 ' + opt.through.length + '부대를 뚫고 돌파합니다.');
+    bLog('🐎 ' + u.name + ' 부대 돌격! 적 ' + opt.through.length + '부대를 뚫고 돌파합니다. [돌격 ' + chargeLeft(u) + '회 남음]');
     sfx('charge');
     opt.through.forEach((p, i) => {
       const foe = p.unit;
@@ -709,15 +719,18 @@ const Battle = (function () {
     afterAction(940 + Math.round(ride));
   }
 
-  /* ── 보병 일제공격 — 2부대 이상이 함께 공격한다 ───────── */
+  /* ── 보병 일제공격 — 보병·기병 2부대 이상이 함께 공격한다 ─ */
+  const VOLLEY_MAX = 2;        // 부대당 한 전투의 일제공격 참여 횟수
   const VOLLEY_PARTNERS = 2;    // 함께 공격할 수 있는 동료 부대 수
   const VOLLEY_RATE = 0.6;      // 동료 1부대당 피해 비율
 
+  function volleyLeft(u) { return u && u.volley > 0 ? u.volley : 0; }
+
   function volleyPartners(u, target) {
-    if (!u || u.branch !== '보병' || !target || !target.alive) return [];
+    if (!u || u.branch !== '보병' || volleyLeft(u) <= 0 || !target || !target.alive) return [];
     if (!meleeReachable(u, target)) return [];
     return B.units.filter(x => x !== u && x.alive && x.side === u.side &&
-      x.branch === '보병' && !x.acted && !isConfused(x) && meleeReachable(x, target))
+      (x.branch === '보병' || x.branch === '기병') && volleyLeft(x) > 0 && !x.acted && !isConfused(x) && meleeReachable(x, target))
       .slice(0, VOLLEY_PARTNERS);
   }
   function volleyTargets(u) {
@@ -726,13 +739,14 @@ const Battle = (function () {
       volleyPartners(u, t).length > 0);
   }
   function doVolley(u, target) {
-    if (!B || B.over || !u || !u.alive || !target || !target.alive) return;
+    if (!B || B.over || !u || !u.alive || u.branch !== '보병' || u.acted || isConfused(u) || !target || !target.alive) return;
     const mates = volleyPartners(u, target);
     if (!mates.length) return;
     const group = [u].concat(mates);
     let total = 0;
     group.forEach((x, i) => {
       total += Math.round(calcDamage(x, target) * (i === 0 ? 1 : VOLLEY_RATE));
+      x.volley = volleyLeft(x) - 1;
       x.acted = true;
       fx('slash', x, target, { delay: i * 170 });
     });
@@ -809,7 +823,7 @@ const Battle = (function () {
   function duelBlockedReason(u) {
     if (!u) return '일기토를 걸 부대를 먼저 선택하세요.';
     if (u.noOfficer) return u.name + ' 부대는 무장이 없어 일기토를 걸 수 없습니다.';
-    if (u.dueled) return u.name + ' 부대는 이미 일기토를 했습니다 (부대당 전투 중 1회).';
+    if (u.dueled) return u.name + ' 부대는 이미 일기토를 신청했습니다 (부대당 전투 중 1회).';
     const adj = adjacentFoes(u);
     if (!adj.length) return '일기토를 걸 상대가 인접(상하좌우 1칸)해 있지 않거나 사이에 강이 있습니다.';
     return '인접한 ' + adj.map(t => t.name).join('·') + ' 부대는 무장이 없어 일기토를 걸 수 없습니다.';
@@ -873,17 +887,44 @@ const Battle = (function () {
     afterAction(countered ? 940 : (ranged ? 700 : 620));
   }
 
-  function doDuel(a, d) {
-    if (!B || B.over || !a.alive || !d.alive || a.acted || !duelTargets(a).includes(d)) return;
-    a.dueled = true;
+  function duelWinChance(a, d) {
     const sa = SKILLS[a.officer.skill] || {}, sd = SKILLS[d.officer.skill] || {};
-    const p = cl(0.5 + (a.officer.wu - d.officer.wu) * 0.012 + (sa.duel || 0) - (sd.duel || 0) + (CombatRules.talent(a).duel || 0) - (CombatRules.talent(d).duel || 0), 0.08, 0.92);
-    const win = Math.random() < p;
+    return cl(0.5 + (a.officer.wu - d.officer.wu) * 0.012 + (sa.duel || 0) - (sd.duel || 0) + (CombatRules.talent(a).duel || 0) - (CombatRules.talent(d).duel || 0), 0.08, 0.92);
+  }
+  function duelMoraleLoss(winner) { return Math.round(25 * tacticalScale(winner)); }
+  function doDuel(a, d) {
+    if (!B || B.over || B.duelRequest || !a.alive || !d.alive || a.acted || !duelTargets(a).includes(d)) return;
+    a.dueled = true;
+    a.acted = true;
+    bLog('⚔ ' + a.name + ' → ' + d.name + ' : 일기토 신청!');
+    if (d.side === B.playerSide && !B.auto) {
+      B.duelRequest = { attacker: a, defender: d };
+      B.busy = true;
+      renderPanel();
+      return;
+    }
+    // 승산이 매우 낮고 거부해도 도주하지 않는 경우에는 병력을 보존한다.
+    const accept = duelWinChance(d, a) >= 0.25 || d.morale <= duelMoraleLoss(a) * 2;
+    resolveDuel(a, d, accept);
+  }
+  function resolveDuel(a, d, accept) {
+    if (!accept) {
+      const moraleLoss = duelMoraleLoss(a) * 2;
+      d.morale = cl(d.morale - moraleLoss, 0, 100);
+      B.floats.push({ x: d.x, y: d.y, text: '일기토 거부 · 사기 -' + moraleLoss });
+      bLog('🏳 ' + d.name + ' 부대가 ' + a.name + '의 일기토를 거부했습니다. 병력 손실 없음, 사기 -' + moraleLoss + ' (패배 시의 2배)');
+      sfx('fail');
+      // 거부로 사기가 0이 되어 도주하더라도 병력은 잃지 않는다.
+      if (d.morale <= 0) finishUnit(d, true);
+      afterAction(820);
+      return;
+    }
+    const win = Math.random() < duelWinChance(a, d);
     const w = win ? a : d, l = win ? d : a;
     const impact = tacticalScale(w);
     const loss = Math.round(l.troops * 0.10 * impact);
     l.troops = Math.max(0, l.troops - loss);
-    const moraleLoss = Math.round(25 * impact);
+    const moraleLoss = duelMoraleLoss(w);
     l.morale = cl(l.morale - moraleLoss, 0, 100);
     w.morale = cl(w.morale + 10, 0, 100);
     const rally=CombatRules.talent(w).rally||0;
@@ -996,7 +1037,7 @@ const Battle = (function () {
   }
   // 수비측 후퇴 — 성을 내주고 잔존 병력을 지정 도시로 옮긴다
   function retreatTo(cityName) {
-    if (!B || B.over || B.playerSide !== 'def') return;
+    if (!B || B.over || B.duelRequest || B.playerSide !== 'def') return;
     const dest = retreatCities().find(c => c.name === cityName);
     if (!dest) { bLog('후퇴할 수 없는 도시입니다.'); return; }
     B.mode = 'select'; B.sel = null; B.strat = null;
@@ -1139,7 +1180,7 @@ const Battle = (function () {
         return true;
       }
     }
-    // 보병은 인접한 동료와 함께 일제공격할 수 있다
+    // 보병은 인접한 보병·기병 동료와 함께 일제공격할 수 있다
     const vol = volleyTargets(u);
     if (vol.length && Math.random() < 0.45) {
       doVolley(u, vol.slice().sort((a, b) => a.troops - b.troops)[0]);
@@ -1339,6 +1380,16 @@ const Battle = (function () {
   /* ── 입력 ──────────────────────────────────────────── */
   function act(cmd) {
     if (!B || B.over) return;
+    if (B.duelRequest) {
+      if (cmd === 'duelAccept' || cmd === 'duelRefuse') {
+        const { attacker, defender } = B.duelRequest;
+        B.duelRequest = null;
+        B.busy = false;
+        B.mode = 'select';
+        resolveDuel(attacker, defender, cmd === 'duelAccept');
+      }
+      return;
+    }
     if (cmd === 'auto') {
       B.auto = !B.auto;
       bLog(B.auto ? '⏩ 자동 진행을 시작합니다.' : '⏸ 자동 진행을 멈춥니다.');
@@ -1365,14 +1416,16 @@ const Battle = (function () {
     }
     if (cmd === 'charge') {
       if (u.branch !== '기병') { bLog('돌격은 기병 부대만 할 수 있습니다.'); return; }
+      if (chargeLeft(u) <= 0) { bLog(u.name + ' 부대는 이번 전투의 돌격 2회를 모두 썼습니다.'); return; }
       if (u.moved) { bLog('돌격은 이동 전에만 할 수 있습니다.'); return; }
       if (B.terrain[u.y][u.x]!==0) { bLog('돌격은 평지에서 출발해야 합니다. 숲·산·성·여울에서는 대형을 갖출 수 없습니다.'); return; }
       if (!chargeOptions(u).length) { bLog('뚫고 나갈 적진이 없습니다.'); return; }
       B.mode = 'charge'; renderPanel(); return;
     }
     if (cmd === 'volley') {
-      if (u.branch !== '보병') { bLog('일제공격은 보병 부대만 할 수 있습니다.'); return; }
-      if (!volleyTargets(u).length) { bLog('함께 공격할 보병 부대가 인접해 있지 않습니다.'); return; }
+      if (u.branch !== '보병') { bLog('일제공격은 보병만 시작할 수 있습니다. 기병은 보병의 일제공격에 참여만 할 수 있습니다.'); return; }
+      if (volleyLeft(u) <= 0) { bLog(u.name + ' 부대는 이번 전투의 일제공격 2회를 모두 썼습니다.'); return; }
+      if (!volleyTargets(u).length) { bLog('함께 공격할 수 있는 보병·기병 부대가 적에 인접해 있지 않습니다. 일제공격 횟수가 남아 있어야 합니다.'); return; }
       B.mode = 'volley'; renderPanel(); return;
     }
     if (cmd === 'fire') {
@@ -1523,6 +1576,10 @@ const Battle = (function () {
       city: B.opts.city.name, siege:!!B.opts.siege, geography:{region:B.geo.region,site:B.geo.site,kind:B.geo.kind,tactics:B.geo.tactics}, round: B.round, maxRound: B.maxRound,
       playerSide: B.playerSide, side: B.side, auto: B.auto, busy: B.busy,
       over: B.over, winner: B.winner || null, mode: B.mode, strat: B.strat,
+      duelRequest: B.duelRequest ? {
+        attacker: B.units.indexOf(B.duelRequest.attacker), defender: B.units.indexOf(B.duelRequest.defender),
+        refusalMoraleLoss: duelMoraleLoss(B.duelRequest.attacker) * 2
+      } : null,
       supply: B.supply ? { atk:{...B.supply.atk}, def:{...B.supply.def} } : null,
       selectedUnit: B.sel ? B.units.indexOf(B.sel) : null,
       cols: COLS, rows: ROWS,
@@ -1530,7 +1587,8 @@ const Battle = (function () {
         id: B.units.indexOf(u), name: u.name, side: u.side, x: u.x, y: u.y,
         troops: u.troops, training: u.training, morale: u.morale, branch: u.branch, form: u.form,
         wu: u.officer.wu, zhi: u.officer.zhi, skill: u.officer.skill,
-        acted: u.acted, moved: u.moved, confused: isConfused(u), burn: u.burn, fire: u.fire
+        acted: u.acted, moved: u.moved, confused: isConfused(u), burn: u.burn, fire: u.fire,
+        charge: chargeLeft(u), volley: volleyLeft(u)
       })),
       tiles: B.terrain.flatMap((row, y) => row.map((terrain, x) => ({
         x, y, terrain: ['평지', '숲', '산', '성', '물', '여울'][terrain],
@@ -2867,9 +2925,41 @@ const Battle = (function () {
   }
 
   /* ── 패널 ──────────────────────────────────────────── */
+  function renderDuelPrompt() {
+    const el = $('bDuelPrompt');
+    if (!el) return;
+    const request = !B.over && B.duelRequest;
+    if (!request) { el.innerHTML = ''; return; }
+    const { attacker, defender } = request;
+    const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const loss = duelMoraleLoss(attacker) * 2;
+    const html = '<div class="modal-bg top"><div class="modal duel-prompt" role="dialog" aria-modal="true" aria-labelledby="bDuelTitle" aria-describedby="bDuelCost">' +
+      '<h2 id="bDuelTitle">일기토 신청</h2><p>' + escape(attacker.name) + ' 장수가 일기토를 신청했습니다.</p>' +
+      '<table class="duel-compare"><thead><tr><th scope="col">정보</th><th scope="col">아군 · 응답</th><th scope="col">적군 · 신청</th></tr></thead><tbody>' +
+      '<tr><th scope="row">무장</th><td>' + escape(defender.name) + '</td><td>' + escape(attacker.name) + '</td></tr>' +
+      '<tr><th scope="row">무력</th><td>' + defender.officer.wu + '</td><td>' + attacker.officer.wu + '</td></tr>' +
+      '<tr><th scope="row">사기</th><td>' + defender.morale + '</td><td>' + attacker.morale + '</td></tr>' +
+      '<tr><th scope="row">병력</th><td>' + commas(defender.troops) + '</td><td>' + commas(attacker.troops) + '</td></tr></tbody></table>' +
+      '<p id="bDuelCost">거부하면 병력 손실 없이 아군 사기가 ' + loss + ' 감소합니다(일기토 패배 시의 2배, ' + defender.morale + ' → ' + Math.max(0, defender.morale - loss) + ').' +
+      (defender.morale <= loss ? ' 사기가 0이 되어 이 부대는 병력을 보존한 채 전장에서 도주합니다.' : '') + '</p>' +
+      '<div class="foot"><button id="bDuelAccept" onclick="Battle.act(\'duelAccept\')">수락</button><button id="bDuelRefuse" onclick="Battle.act(\'duelRefuse\')">거부 · 사기 -' + loss + '</button></div></div></div>';
+    if (el.innerHTML !== html) {
+      el.innerHTML = html;
+      const accept = $('bDuelAccept'), refuse = $('bDuelRefuse');
+      if (accept && accept.focus) accept.focus();
+      el.onkeydown = e => {
+        if (e.key !== 'Tab') return;
+        e.preventDefault();
+        const next = document.activeElement === accept ? refuse : accept;
+        if (next && next.focus) next.focus();
+      };
+    }
+  }
+
   function renderPanel() {
     hideUnitTooltip();
     if (!B) return;
+    renderDuelPrompt();
     const info = $('bRoundInfo');
     if (info) {
       const forts = fortTiles();
@@ -2932,6 +3022,9 @@ const Battle = (function () {
             (u.acted ? '<span class="badge2">행동 완료</span>' : '') +
             ((u.confused > 0 || u.confusedNow) ? '<span class="badge2" style="color:#ffb0c8">혼란</span>' : '') +
             (u.burn > 0 ? '<span class="badge2" style="color:#ff9d5c">화상</span>' : '') +
+            (u.branch === '기병' ? '<span class="badge2">돌격 ' + chargeLeft(u) + '회 남음</span>' : '') +
+            (u.branch === '보병' ? '<span class="badge2">일제공격 ' + volleyLeft(u) + '회 남음</span>' : '') +
+            (u.branch === '기병' ? '<span class="badge2">일제공격 참여 ' + volleyLeft(u) + '회 남음</span>' : '') +
             (u.branch === '궁병' ? '<span class="badge2" style="color:#ffb070">불화살 ' + fireLeft(u) + '</span>' : '') +
             (fortAt(u.x, u.y) ? '<span class="badge2" style="color:#ffd479">성 안 · 방어 +40% · 반격 피해 -25%</span>' : '') +
             (sk ? '<span class="badge2" style="color:var(--gold)">' + u.officer.skill + '</span>' : '') + '</div>' +
@@ -2963,10 +3056,11 @@ const Battle = (function () {
       const okFire = can && u.branch === '궁병' && fireLeft(u) > 0 && fireTargets(u).length > 0;
       const btn = (cmd, ico, label, ok) => '<button aria-label="' + label + '" onclick="Battle.act(\'' + cmd + '\')"' + (ok ? '' : ' disabled') + '><i class="ico">' + ico + '</i><span>' + label + '</span></button>';
       let h = btn('move', '移', '이동', okMove) +
-        btn('charge', '突', '돌격', okCharge) +
-        btn('volley', '齊', '일제공격', okVolley) +
-        btn('fire', '火', '불화살', okFire) +
-        btn('atk', '攻', '공격', okAtk) + btn('strat', '策', '계략', okStrat) +
+        btn('atk', '攻', '공격', okAtk) +
+        (u && u.branch === '기병' ? btn('charge', '突', '돌격', okCharge) : '') +
+        (u && u.branch === '보병' ? btn('volley', '齊', '일제공격', okVolley) : '') +
+        (u && u.branch === '궁병' ? btn('fire', '火', '불화살', okFire) : '') +
+        btn('strat', '策', '계략', okStrat) +
         btn('duel', '鬪', '일기토', okDuel) + btn('form', '陣', '진형', can) + btn('wait', '待', '대기', can);
       if (B.mode === 'strat' && !B.auto) {
         h += STRATS.map(s => '<button onclick="Battle.setStrat(\'' + s + '\')"' + (B.strat === s ? ' class="on"' : '') + '>' + s + '</button>').join('');
@@ -2980,7 +3074,7 @@ const Battle = (function () {
       acts.innerHTML = h;
     }
     const autoBtn = $('bAuto');
-    if (autoBtn) autoBtn.disabled = B.over;
+    if (autoBtn) autoBtn.disabled = B.over || !!B.duelRequest;
     if (autoBtn) autoBtn.innerHTML = '<svg class="auto-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="' +
       (B.auto ? 'M4 3h3v10H4zM9 3h3v10H9z' : 'M1 3v10l7-5zM8 3v10l7-5z') +
       '"></path></svg>' + (B.auto ? '자동 멈춤' : '자동 진행');

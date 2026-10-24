@@ -101,6 +101,51 @@ assert(tinyFireDamage < 100, 'tiny unit retains full fire stratagem damage');
 assert(reportsLost, 'destroyed officers disappear from campaign result');
 console.log('[OK] troop strength, recovery, inspiration, duel parity, small-force tactics, destroyed roster');
 
+// A human can answer on either army's turn; the popup exposes the real unit values.
+for (const playerSide of ['atk','def']) for (const accept of [false,true]) for (const troops of [333,3000]) {
+  b=setup([unit('Enemy Challenger',troops)],[unit('Friendly Defender',4321)]);
+  a=b.units[0];d=b.units[1];
+  a.side=playerSide==='atk'?'def':'atk';d.side=playerSide;
+  b.playerSide=playerSide;b.side=a.side;b.sel=a;
+  a.officer.wu=91;d.officer.wu=77;a.morale=83;d.morale=86;
+  p.doDuel(a,d);
+  assert(b.duelRequest&&b.busy,'challenge must pause for the human response');
+  assert(a.acted&&a.dueled,'the request must consume the challenger action and one challenge');
+  assert.equal(d.troops,4321);assert.equal(d.morale,86);
+  const html=els.bDuelPrompt.innerHTML;
+  for(const value of ['role="dialog"','아군','적군','Enemy Challenger','Friendly Defender','91','77','83','86','4,321',troops===333?'333':'3,000','수락','거부'])
+    assert(html.includes(value),'duel popup missing '+value);
+  const observation=Battle.observation();
+  assert.equal(observation.duelRequest.refusalMoraleLoss,Math.round(25*Math.min(1,troops/1000))*2);
+  assert(observation.tiles.every(t=>t.action===null),'board input must pause while awaiting a response');
+  Battle.act('auto');Battle.act('nextTurn');Battle.act('retreat');
+  assert(!b.auto&&b.duelRequest&&!b.over,'other commands must not bypass the response');
+  Battle.act(accept?'duelAccept':'duelRefuse');
+  assert.equal(b.duelRequest,null);assert.equal(els.bDuelPrompt.innerHTML,'');
+  const scale=Math.min(1,troops/1000);
+  assert.equal(d.troops,accept?4321-Math.round(4321*.1*scale):4321);
+  assert.equal(d.morale,86-Math.round(25*scale)*(accept?1:2));
+  assert(!d.acted,'answering a challenge must not consume the defender action');
+  assert.equal(a.morale,accept?93:83,'refusal must not grant a duel victory bonus');
+  const after=[a.troops,a.morale,d.troops,d.morale];
+  Battle.act('duelRefuse');Battle.act('duelAccept');
+  assert.deepEqual([a.troops,a.morale,d.troops,d.morale],after,'duplicate response applied twice');
+  assert.equal(p.duelTargets(a).length,0,'refused challenges must still consume the single request');
+}
+// Refusal at low morale can rout a unit, but must never remove its soldiers.
+b=setup();a=b.units[0];d=b.units[1];b.playerSide='def';d.morale=20;
+p.doDuel(a,d);Battle.act('duelRefuse');
+assert.equal(d.morale,0);assert.equal(d.troops,3000);assert(!d.alive);
+// AI uses the same refusal penalty; auto mode resolves human-side responses too.
+for(const auto of [false,true]) {
+  b=setup();a=b.units[0];d=b.units[1];a.officer.wu=100;d.officer.wu=30;
+  b.auto=auto;if(auto)b.playerSide='def';
+  p.doDuel(a,d);
+  assert.equal(b.duelRequest,null);assert.equal(d.troops,3000);assert.equal(d.morale,30);
+  assert(b.log.some(line=>line.includes('거부했습니다')));
+}
+console.log('[OK] duel accept/refuse on both armies, comparison popup, paused inputs, double scaled morale loss, no refusal troop loss, AI responses');
+
 // Branch counters, terrain and generals must still affect otherwise equal armies.
 random = () => .5;
 b = setup(); a = b.units[0]; d = b.units[1];
@@ -233,7 +278,7 @@ console.log('[OK] sequential flag victory/recapture, attack AI flag pursuit, cas
 const geo=vm.runInContext('BattleTerrain',sandbox);
 let riverChecks=0;
 for(const city of Object.values(Game.state.cities)) for(const siege of [false,true]) {
-  b=setup([unit('A',3000),unit('ally',3000)],[unit('D',3000)]);
+  b=setup([unit('A',3000,'기병'),unit('ally',3000)],[unit('D',3000)]);
   b.geo=geo.build(city,siege);b.terrain=b.geo.terrain;b.opts.city=city;b.opts.siege=siege;
   a=b.units[0];const mate=b.units[1];d=b.units[2];
   for(const edge of b.geo.edgeFords) for(const side of ['atk','def']) for(const branch of ['보병','기병']) {
@@ -296,7 +341,7 @@ b=setup();a=b.units[0];d=b.units[1];
 const dry=rules.damage(a,d,{terrain:0,random:1});
 assert(rules.damage(a,d,{terrain:5,random:1})>dry,'a unit exposed in a ford must take more damage');
 for(const side of ['atk','def']) for(const terrain of [1,2,3,4,5]) {
-  b=setup();a=b.units[0];d=b.units[1];a.branch='기병';a.side=side;d.side=side==='atk'?'def':'atk';
+  b=setup([unit('A',3000,'기병')]);a=b.units[0];d=b.units[1];a.side=side;d.side=side==='atk'?'def':'atk';
   a.x=3;a.y=4;d.x=4;d.y=4;
   assert(p.chargeOptions(a).some(c=>c.x===5&&c.y===4),'plain charge missing');
   b.terrain[4][3]=terrain;
