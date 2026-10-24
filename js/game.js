@@ -773,6 +773,8 @@ function factionTotals(fid) {
 function boot() {
   cvM = $('mapCanvas'); ctxM = cvM.getContext('2d');
   cvM.style.cursor = 'grab';
+  const minimapPanel = $('mapMinimap');
+  if (minimapPanel) minimapPanel.addEventListener('toggle', drawMinimap);
   const mini = $('mapMiniCanvas');
   if (mini) mini.addEventListener('pointerup', e => {
     if (!G || G.battleActive || attackIntro || e.button !== 0) return;
@@ -1779,13 +1781,14 @@ function drawLinks(x, sc) {
   x.restore();
 }
 
-/* 모바일에서는 실제 화면 크기를 보정하고 확대에 따라 성과 병력 표시도 함께 키운다. */
+/* 확대에 따라 성과 병력 표시도 키운다. 모바일에서는 실제 화면 크기도 보정한다. */
 function isMobileMap() {
   return typeof window !== 'undefined' && window.innerWidth > 0 && window.innerWidth <= 940;
 }
 function cityMarkerScale(sc = view.scale) {
   const rect = cvM?.getBoundingClientRect();
-  return isMobileMap() && rect?.width > 0 ? Math.max(1, MAP_WIDTH / rect.width * (0.32 + 0.16 * (sc - 1))) : 1;
+  if (isMobileMap() && rect?.width > 0) return Math.max(1, MAP_WIDTH / rect.width * (0.32 + 0.16 * (sc - 1)));
+  return Math.sqrt(Math.max(1, sc));
 }
 
 /* 규모별 성곽: 작은 토성 → 누각과 성벽 → 이중 성벽·쌍루. 병력은 아래에 표시한다. */
@@ -1857,7 +1860,7 @@ function cityLabelLayout(x, names, labelScale = 1, markerScale = 1) {
   cityLabelCache={key,labels};return labels;
 }
 
-/* 이름표는 읽기 쉬운 화면 크기를 유지하고 성 표식은 모바일 배율을 반영한다. */
+/* 이름표는 읽기 쉬운 화면 크기를 유지하고 성 표식은 지도 확대 배율을 반영한다. */
 function drawCities(x, sc) {
   const W = MAP_WIDTH, H = MAP_HEIGHT;
   const SERIF = '"Batang","바탕",Georgia,serif';
@@ -2136,6 +2139,8 @@ function playAttackIntro(ctx, next, intercept = false) {
   stopAttackIntro();
   stopZoomAnim();
   dragState = null; hover = null;
+  // 모바일의 도시·명령/전황 기록 탭에서도 지도 위의 진군 연출을 볼 수 있게 한다.
+  mobilePanel('map');
   // 확대 지도의 화면 밖에서 시작되는 공격도 출발지와 목적지를 함께 보여 준다.
   const points = [from, to].map(c => screenFromWorld(c.x, c.y));
   if (points.some(p => p.x < 60 || p.y < 60 || p.x > MAP_WIDTH - 60 || p.y > MAP_HEIGHT - 60)) {
@@ -2243,8 +2248,10 @@ function renderMapFactionLegend() {
 }
 
 function drawMinimap() {
+  const panel = $('mapMinimap');
+  if (panel && !panel.open) return;
   const mini = $('mapMiniCanvas');
-  if (!mini || !terrainBaseLayer) return;
+  if (!mini || !G || !terrainBaseLayer) return;
   const rect = mini.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
   const ratio = Math.min(window.devicePixelRatio || 1, 2);

@@ -227,8 +227,9 @@ const Battle = (function () {
           '<div class="battle-map">' +
             '<div class="battle-geography"><div><b>' + B.geo.region + ' · '+B.geo.site+'</b><span>' + (B.opts.siege?B.geo.detail:B.geo.tactics) + '</span></div><span class="north">↑ 북</span></div>' +
             '<div class="battle-viewport" id="bViewport"><canvas id="battleCanvas" aria-label="' + B.opts.city.name + ' 전술 전장" width="' + (COLS * TILE) + '" height="' + (ROWS * TILE) + '"></canvas>' +
-              '<div class="battle-minimap" role="group" aria-label="전장 미니맵"><canvas id="bMiniCanvas" width="296" height="205" role="img" aria-label="전장 전체 지도 · 파란 원은 아군, 붉은 마름모는 적군" title="전체 전장 · 누르면 해당 위치로 이동"></canvas>' +
-                '<div class="battle-minimap-legend"><span class="friendly">● 아군 <b id="bMiniFriendly">0</b></span><span class="hostile">◆ 적군 <b id="bMiniHostile">0</b></span></div></div></div>' +
+              '<details id="bMinimap" class="minimap-panel battle-minimap" open><summary>전장 미니맵<span class="minimap-fold" aria-hidden="true"></span></summary>' +
+                '<canvas id="bMiniCanvas" width="296" height="205" role="img" aria-label="전장 전체 지도 · 파란 원은 아군, 붉은 마름모는 적군" title="전체 전장 · 누르면 해당 위치로 이동"></canvas>' +
+                '<div class="battle-minimap-legend"><span class="friendly">● 아군 <b id="bMiniFriendly">0</b></span><span class="hostile">◆ 적군 <b id="bMiniHostile">0</b></span></div></details></div>' +
             '<div class="terrain-legend"><span><i class="land"></i>평지</span><span><i class="forest"></i>숲 +15%</span><span><i class="mountain"></i>산 +25%</span>' + (B.opts.siege?'<span><i class="fort"></i>성 +40%</span>':'') + '<span><i class="water"></i>물 · 진입 불가</span><span><i class="ford"></i>여울 · 방어 -15% · 이동 2~3</span></div>' +
             '<div class="map-hint" id="bTerrainInfo"></div>' +
             '<details class="text-board battle-directory" id="bDirectory"><summary>전장 목록 · 좌표로 조작</summary><div id="bTextBoard"></div></details>' +
@@ -254,6 +255,7 @@ const Battle = (function () {
       '</div></div>';
     cv = $('battleCanvas');
     ctx = cv.getContext('2d');
+    $('bMinimap').addEventListener('toggle', drawMinimap);
     const mini = $('bMiniCanvas');
     if (mini) mini.addEventListener('pointerup', e => {
       if (!B || e.button !== 0) return;
@@ -2105,8 +2107,10 @@ const Battle = (function () {
   }
 
   function drawMinimap() {
+    const panel = $('bMinimap');
+    if (panel && !panel.open) return;
     const mini = $('bMiniCanvas');
-    if (!mini || !B.backdropBase) return;
+    if (!mini || !B || !B.backdropBase) return;
     const r = mini.getBoundingClientRect();
     if (!r.width || !r.height) return;
     const ratio = Math.min((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 2);

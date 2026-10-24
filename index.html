@@ -114,7 +114,16 @@ main{flex:1;display:flex;min-height:0}
   box-shadow:0 26px 70px #000d, 0 0 0 1px #e6c37c1a, inset 0 0 0 1px #ffffff0a;
 }
 #mapCanvas:active{cursor:grabbing}
-#mapMiniCanvas{position:absolute;top:10px;right:10px;z-index:3;width:144px;height:120px;border:1px solid var(--gold3);border-radius:8px;background:#0a110e;box-shadow:0 4px 14px #0009;cursor:crosshair;touch-action:manipulation}
+.minimap-panel{position:absolute;z-index:4;padding:4px;border:1px solid var(--gold3);border-radius:8px;background:#0b1510ed;box-shadow:0 4px 14px #0009}
+.minimap-panel:not([open]){width:max-content}
+.minimap-panel>summary{display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:28px;padding:0 3px;list-style:none;cursor:pointer;color:var(--gold);font-size:11px;white-space:nowrap;touch-action:manipulation}
+.minimap-panel>summary::-webkit-details-marker{display:none}
+.minimap-panel>summary:focus-visible{outline:2px solid var(--gold);outline-offset:1px;border-radius:4px}
+.minimap-panel .minimap-fold{font-size:10px;color:var(--muted)}
+.minimap-panel .minimap-fold::after{content:'펼치기 ▾'}
+.minimap-panel[open] .minimap-fold::after{content:'접기 ▴'}
+.map-minimap{top:10px;right:10px;width:154px}
+#mapMiniCanvas{display:block;width:100%;height:auto;aspect-ratio:6/5;border-radius:4px;background:#0a110e;cursor:crosshair;touch-action:manipulation}
 #mapFactionLegend{display:none}
 #attackIntro{position:fixed;inset:0;z-index:80;cursor:wait;display:flex;align-items:flex-end;justify-content:center;padding:24px;color:#f6eedb;font-weight:700;font-size:16px;text-shadow:0 2px 5px #000;background:linear-gradient(transparent 85%,#07100ce8);border-bottom:4px solid var(--attack-color)}
 #attackIntro[hidden]{display:none}
@@ -436,7 +445,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
 }
 .battle-viewport{position:relative;flex:1 1 0;min-height:0;width:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .battle-map>.battle-viewport{flex-shrink:1}
-.battle-minimap{position:absolute;top:8px;right:8px;z-index:4;width:148px;padding:4px;border:1px solid var(--gold3);border-radius:8px;background:#0b1510ed;box-shadow:0 4px 14px #0009}
+.battle-minimap{top:8px;right:8px;width:148px}
 #bMiniCanvas{display:block;width:100%;aspect-ratio:13/9;border-radius:4px;cursor:crosshair;touch-action:manipulation}
 .battle-minimap-legend{display:flex;align-items:center;justify-content:space-between;gap:4px;padding-top:3px;font-size:10px;line-height:14px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .battle-minimap-legend b{font-weight:500}
@@ -579,7 +588,8 @@ input[type=checkbox]{accent-color:var(--gold2)}
   #app>main{overflow:hidden;min-height:0}
   #mapWrap{flex:1;min-height:0;padding:8px;overflow:hidden}
   #mapCanvas{width:auto;height:auto;max-width:100%;max-height:100%;border-radius:10px}
-  #mapMiniCanvas{top:4px;right:4px;width:96px;height:80px;border-radius:6px}
+  .map-minimap{top:4px;right:4px;width:104px;padding:3px;border-radius:6px}
+  .minimap-panel>summary{min-height:44px;padding:0;font-size:10px;gap:4px}
   #mapFactionLegend{display:block;position:relative;z-index:1;flex:none;align-self:stretch;padding:7px 9px;border:1px solid var(--line2);border-radius:9px;background:#101a14}
   #mapFactionLegend .legend-heading{display:flex;justify-content:space-between;gap:8px;margin-bottom:5px;font-size:10px;color:var(--muted)}
   #mapFactionLegend .legend-heading b{color:var(--gold);font-weight:600}
@@ -653,7 +663,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
 }
 @media (max-width:940px) and (max-height:500px) and (orientation:landscape){
   #mapFactionLegend .faction-grid{grid-template-columns:repeat(7,minmax(0,1fr))}
-  #mapMiniCanvas{width:84px;height:70px}
+  .map-minimap{width:92px}
   .battle-body{flex-direction:row}
   .battle-map{width:auto}
   .battle-side{width:300px;flex:0 0 300px;border-top:0;border-left:1px solid var(--line)}
@@ -700,7 +710,10 @@ input[type=checkbox]{accent-color:var(--gold2)}
     <div id="mapWrap">
       <div id="mapViewport">
         <canvas id="mapCanvas" width="1200" height="1000" aria-label="중원 지도"></canvas>
-        <canvas id="mapMiniCanvas" width="288" height="240" role="img" aria-label="전체 지도 미니맵 · 누르면 해당 위치로 이동" title="전체 지도 · 누르면 해당 위치로 이동"></canvas>
+        <details id="mapMinimap" class="minimap-panel map-minimap" open>
+          <summary>전체지도<span class="minimap-fold" aria-hidden="true"></span></summary>
+          <canvas id="mapMiniCanvas" width="288" height="240" role="img" aria-label="전체 지도 미니맵 · 누르면 해당 위치로 이동" title="전체 지도 · 누르면 해당 위치로 이동"></canvas>
+        </details>
         <div id="mapHint" role="group" aria-label="지도 목적지 선택"></div>
       </div>
       <div id="mapFactionLegend" role="region" aria-label="세력 일람"></div>
