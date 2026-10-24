@@ -1,5 +1,10 @@
 # 삼국지 : 천하통일 (Three Kingdoms: Unification)
 
+<p align="center">
+  <img src="screenshot01.jpg" alt="삼국지 : 천하통일 — 게임 화면 1" width="49%">
+  <img src="screenshot02.jpg" alt="삼국지 : 천하통일 — 게임 화면 2" width="49%">
+</p>
+
 삼국지5 스타일의 **턴제 전략 시뮬레이션 게임**. 역사 4개·가상 대전 1개 시나리오에서 세력을 골라
 30개 도시를 모두 점령해 천하를 통일하는 것이 목표입니다. 설치 없이 브라우저에서 실행됩니다.
 
