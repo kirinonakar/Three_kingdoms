@@ -1788,7 +1788,8 @@ function isMobileMap() {
 function cityMarkerScale(sc = view.scale) {
   const rect = cvM?.getBoundingClientRect();
   if (isMobileMap() && rect?.width > 0) return Math.max(1, MAP_WIDTH / rect.width * (0.32 + 0.16 * (sc - 1)));
-  return Math.sqrt(Math.max(1, sc));
+  // PC는 최소 배율에서 10% 작게 시작하고 최대 확대 시에는 기존 크기를 유지한다.
+  return 0.9 + 1.1 * (Math.sqrt(Math.max(1, sc)) - 1);
 }
 
 /* 규모별 성곽: 작은 토성 → 누각과 성벽 → 이중 성벽·쌍루. 병력은 아래에 표시한다. */
