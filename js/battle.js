@@ -348,7 +348,7 @@ const Battle = (function () {
       (u.branch==='보병'?'<p>일제공격 '+volleyLeft(u)+'회 남음 (시작·참여 시 1회 소모)</p>':'')+
       (u.branch==='기병'?'<p>일제공격 참여 '+volleyLeft(u)+'회 남음 (보병이 시작할 때 참여만 가능)</p>':'')+
       (u.branch==='궁병'?'<p>불화살 '+fireLeft(u)+'회 남음</p>':'')+
-      (fortAt(u.x,u.y)?'<p class="ut-skill">성 주둔 · 지형 방어 +40% · 받는 반격 피해 -25%</p>':'');
+      (fortAt(u.x,u.y)?'<p class="ut-skill">성 주둔 · 지형 방어 +40% · 받는 반격 피해 -25% · 인접한 적이 없으면 성벽 사격 (사거리 2)</p>':'');
     if(el.innerHTML!==html)el.innerHTML=html;
     el.hidden=false;
     const box=el.getBoundingClientRect(),width=window.innerWidth,height=window.innerHeight;
@@ -505,7 +505,7 @@ const Battle = (function () {
         renderPanel();
         return;
       }
-      const u = unacted(B.side)[0];
+      const u = aiNextUnit(unacted(B.side));
       if (!u) { B.side = B.side === 'atk' ? 'def' : 'atk'; continue; }
       if (B.busy) return;
       B.busy = true;
@@ -806,9 +806,19 @@ const Battle = (function () {
     checkAlive(d);
     afterAction(1060);
   }
+  function fortCanShoot(u) {
+    return !!fortAt(u.x, u.y) && !B.units.some(e =>
+      e.alive && !e.dying && e.side !== u.side && mdist(u, e) === 1);
+  }
+  function attackReachable(u, t) {
+    const distance = mdist(u, t);
+    if (u.branch === '궁병') return distance <= BRANCHES[u.branch].range;
+    if (meleeReachable(u, t)) return true;
+    // 성벽 사격은 병과와 관계없이 사거리 2. 인접 적이 있으면 근접전에 집중한다.
+    return distance === 2 && fortCanShoot(u);
+  }
   function attackTargets(u) {
-    return B.units.filter(t => t.alive && t.side !== u.side && mdist(t, u) <= BRANCHES[u.branch].range &&
-      (u.branch==='궁병'||meleeReachable(u,t)));
+    return B.units.filter(t => t.alive && t.side !== u.side && attackReachable(u, t));
   }
   // 인접(상하좌우 1칸)한 적 부대 — 일기토 판정과 안내 문구가 같은 기준을 쓴다
   function adjacentFoes(u) {
@@ -835,10 +845,16 @@ const Battle = (function () {
     return B.units.filter(t => t.alive && t.side !== u.side && stratRange(u, t));
   }
 
-  function calcDamage(a, d) {
-    const alliesA=alive(a.side),alliesD=alive(d.side);
-    return CombatRules.damage(a,d,{terrain:B.terrain[d.y][d.x],cityDef:d.side==='def'?B.cityDef:0,
-      random:rnd(.8,1.2),ranged:mdist(a,d)>1,alliesA,alliesD,
+  function calcDamage(a, d, random = rnd(.8,1.2)) {
+    // 성벽의 활은 원래 병과의 근접 공격력·상성·기병 진형 보너스를 쓰지 않는다.
+    // 같은 장수·병력·훈련·사기·진형의 일반 궁병과 같은 피해로 계산한다.
+    const attacker = a.branch !== '궁병' && mdist(a, d) === 2 && fortCanShoot(a)
+      ? { ...a, branch: '궁병' } : a;
+    // AI가 이동·돌격 도착 위치를 가정할 때도 지휘 효과의 자신/동료 구분을 유지한다.
+    const alliesA=alive(a.side).map(u => u.officer === a.officer ? attacker : u);
+    const alliesD=alive(d.side).map(u => u.officer === d.officer ? d : u);
+    return CombatRules.damage(attacker,d,{terrain:B.terrain[d.y][d.x],cityDef:d.side==='def'?B.cityDef:0,
+      random,ranged:mdist(a,d)>1,alliesA,alliesD,
       nearbyA:alliesA.filter(u=>mdist(u,a)<=2),nearbyD:alliesD.filter(u=>mdist(u,d)<=2)});
   }
 
@@ -868,7 +884,8 @@ const Battle = (function () {
     fx(ranged ? 'arrow' : 'slash', a, d);
     sfx(ranged ? 'arrow' : 'slash');
     B.floats.push({ x: d.x, y: d.y, text: '-' + commas(dmg) });
-    bLog('🗡 ' + a.name + ' → ' + d.name + ' : 병력 -' + commas(dmg));
+    bLog((ranged ? (a.branch === '궁병' ? '🏹 ' : '🏹 성벽 사격 · ') : '🗡 ') +
+      a.name + ' → ' + d.name + ' : 병력 -' + commas(dmg));
     checkAlive(d);
     if (noCounter) bLog('💫 ' + d.name + ' 부대는 혼란 상태라 반격하지 못했습니다.');
     // 반격 — 상대가 전멸(도주)한 뒤에도 공격측은 피해를 입는다
@@ -904,7 +921,7 @@ const Battle = (function () {
       return;
     }
     // 승산이 매우 낮고 거부해도 도주하지 않는 경우에는 병력을 보존한다.
-    const accept = duelWinChance(d, a) >= 0.25 || d.morale <= duelMoraleLoss(a) * 2;
+    const accept = aiAcceptDuel(a, d);
     resolveDuel(a, d, accept);
   }
   function resolveDuel(a, d, accept) {
@@ -939,16 +956,31 @@ const Battle = (function () {
     afterAction(820);
   }
 
-  function doStratAct(u, d, type) {
-    if (!B || B.over || !u.alive || !d.alive || u.acted || !stratTargets(u, type).includes(d)) return;
-    u.acted = true;
+  // 실행과 AI 평가가 같은 성공률·피해·회복 규칙을 사용한다.
+  function stratChance(u, d, type) {
     const sa = SKILLS[u.officer.skill] || {}, sd = SKILLS[d.officer.skill] || {};
     let p = 0.42 + (u.officer.zhi - d.officer.zhi) * 0.010 + (sa.strat || 0) - (sd.resist || 0);
     if (type === '화계') p -= 0.05;
     if(type==='혼란') p+=CombatRules.talent(u).confuse||0;
     p-=CombatRules.bonuses(d,alive(d.side)).resist;
     if(type!=='고무'&&B.terrain[d.y][d.x]===3)p-=.10;
-    p = type === '고무' ? 1 : cl(p, 0.08, 0.93) * tacticalScale(u);
+    return type === '고무' ? 1 : cl(p, 0.08, 0.93) * tacticalScale(u);
+  }
+  function stratFireDamage(u, d, roll) {
+    const t = B.terrain[d.y][d.x];
+    let dmg = Math.round((u.officer.zhi * 18 + roll) * (t === 1 ? 1.5 : 1) * Math.min(1, troopStrength(u)));
+    const water = [[0,0],[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy]) => [4,5].includes(B.terrain[u.y+dy]?.[u.x+dx]));
+    dmg = Math.round(dmg * (CombatRules.talent(u).fire || 1) * (CombatRules.talent(u).fire && water ? 1.1 : 1));
+    if (t === 3) dmg = Math.round(dmg * .65);
+    return Math.min(dmg, Math.round(d.troops * .85));
+  }
+  function confuseEscape(d) {
+    return cl(0.08 + (((d.officer && d.officer.zhi) || 50) - 45) * 0.011 + ((SKILLS[d.officer.skill] || {}).resist || 0), 0.05, 0.75);
+  }
+  function doStratAct(u, d, type) {
+    if (!B || B.over || !u.alive || !d.alive || u.acted || !stratTargets(u, type).includes(d)) return;
+    u.acted = true;
+    const p = stratChance(u, d, type);
     if (Math.random() > p) {
       bLog('✖ ' + u.name + '의 ' + type + ' 실패! (성공률 ' + Math.round(p * 100) + '%)');
       sfx('fail');
@@ -957,11 +989,7 @@ const Battle = (function () {
     }
     if (type === '화계') {
       const t = B.terrain[d.y][d.x];
-      let dmg = Math.round((u.officer.zhi * 18 + ri(100, 400)) * (t === 1 ? 1.5 : 1) * Math.min(1, troopStrength(u)));
-      const water=[[0,0],[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy])=>[4,5].includes(B.terrain[u.y+dy]?.[u.x+dx]));
-      dmg=Math.round(dmg*(CombatRules.talent(u).fire||1)*(CombatRules.talent(u).fire&&water?1.1:1));
-      if(B.terrain[d.y][d.x]===3) dmg=Math.round(dmg*.65);
-      dmg = Math.min(dmg, Math.round(d.troops * 0.85));
+      const dmg = stratFireDamage(u, d, ri(100, 400));
       d.troops = Math.max(0, d.troops - dmg);
       d.morale = cl(d.morale - Math.round(ri(5, 12) * tacticalScale(u)), 0, 100);
       fx('fire', u, d);
@@ -972,7 +1000,7 @@ const Battle = (function () {
     } else if (type === '혼란') {
       // 지력이 높은 무장은 혼란을 1턴 만에 벗어날 수 있다 (계략저항 특기 보정)
       const zhi = (d.officer && d.officer.zhi) || 50;
-      const escape = cl(0.08 + (zhi - 45) * 0.011 + (sd.resist || 0), 0.05, 0.75);
+      const escape = confuseEscape(d);
       const shortConfuse = Math.random() < escape;
       const turns = shortConfuse ? 1 : 2;
       d.confused = Math.max(d.confused || 0, turns);
@@ -1087,7 +1115,7 @@ const Battle = (function () {
       return false;
     }
     // 두 번째부터는 행동을 쓴다 — 버티는 것이 급할 때(방원)만 전환하고 이번 턴을 마친다
-    if (want !== '방원') return false;
+    if (want !== '방원' || aiBestAction(u)) return false;
     u.form = want; u.acted = true;
     bLog('🎌 ' + u.name + ' 부대가 ' + want + ' 진형으로 전환하며 이번 턴을 마칩니다 (' + FORMS[want].desc + ')');
     return true;
@@ -1113,23 +1141,10 @@ const Battle = (function () {
       afterAction();
       return;
     }
-    if (tryAct(u)) return;                // 사거리 내 적 → 계략/일기토/공격
+    // 사거리 3의 약한 계략만 반복하지 않고, 이동 후 더 좋은 공격이 가능한지도 비교한다.
+    const positioned = !u.moved && !duty && aiMoveToAction(u, aiBestAction(u));
+    if (!positioned && tryAct(u)) return;
     if (!u.moved) moveToward(u, duty);    // 판단한 출격 위치 또는 성 임무로 이동
-    if (!u.moved && u.branch === '기병') {
-      // 길이 막혔으면 적진을 뚫고 돌격한다
-      const opts = chargeOptions(u);
-      if (opts.length) {
-        const foes = B.units.filter(x => x.alive && x.side !== u.side);
-        const near = foes.slice().sort((a, b) => mdist(u, a) - mdist(u, b))[0];
-        let best = opts[0], bd = 1e9;
-        opts.forEach(o => {
-          const d = near ? Math.abs(o.x - near.x) + Math.abs(o.y - near.y) : 0;
-          if (d < bd) { bd = d; best = o; }
-        });
-        doCharge(u, best);
-        return;
-      }
-    }
     // 이동 후 같은 턴 공격 — 이동 연출이 끝난 뒤에 공격 연출·효과음이 시작된다
     if (u.moved) {
       afterMoveAnim(u, () => {
@@ -1148,45 +1163,165 @@ const Battle = (function () {
     afterAction();
   }
 
-  // 공격 가능한 적이 있으면 행동을 수행하고 true 반환
-  function tryAct(u) {
-    const sa = SKILLS[u.officer.skill] || {};
-    // 아군 사기가 낮으면 고무로 지원
-    const lowAlly = stratTargets(u, '고무').filter(x => x.morale < 45);
-    if (!u.noOfficer && lowAlly.length && u.officer.zhi >= 70 && Math.random() < 0.35) {
-      doStratAct(u, lowAlly[0], '고무');
-      return true;
+  // 피해·사기 붕괴·전멸을 병력 가치로 환산한다. 이미 죽어가는 대상은 평가하지 않는다.
+  function aiImpact(d, damage, morale = 0) {
+    const loss = Math.min(d.troops, Math.max(0, damage));
+    const left = d.troops - loss;
+    const rout = morale >= d.morale;
+    return loss + Math.min(d.morale, morale) * left * .0035 +
+      (rout ? left * .85 : 0) + (rout || left <= 0 ? d.troops * .18 : 0);
+  }
+  function aiCounterCost(u, d) {
+    if (u.branch === '궁병' || isConfused(d) || !meleeReachable(d, u)) return 0;
+    return aiImpact(u, calcDamage(d, u, 1) * COUNTER_RATE *
+      (B.terrain[u.y][u.x] === 3 ? FORT_COUNTER_TAKEN : 1), 2.5 * tacticalScale(d));
+  }
+  function aiAttackScore(u, d) {
+    const fear = u.branch === '궁병' || mdist(u, d) > 1 ? 0 : (CombatRules.talent(u).fear || 0);
+    return aiImpact(d, calcDamage(u, d, 1), (5.5 + fear) * tacticalScale(u)) - aiCounterCost(u, d);
+  }
+  function aiRallyScore(u, d, gain) {
+    // 전선의 큰 부대·도주 직전 부대 지원이 후방의 소수 병력 고무보다 중요하다.
+    const engaged = B.units.some(e => e.alive && !e.dying && e.side !== d.side && mdist(e, d) <= 3);
+    return gain * d.troops * .0035 * (engaged ? 1 : .15) *
+      (d.morale < 25 ? 3 : d.morale < 45 ? 1.7 : .4);
+  }
+  function aiDuelScores(a, d) {
+    const chance = duelWinChance(a, d);
+    const rally = w => alive(w.side).filter(x => x !== w && !x.dying && mdist(x, w) <= 2)
+      .reduce((sum, x) => sum + aiRallyScore(w, x,
+        Math.min(100 - x.morale, Math.round((CombatRules.talent(w).rally || 0) * tacticalScale(w)))), 0);
+    const win = aiImpact(d, d.troops * .1 * tacticalScale(a), duelMoraleLoss(a)) +
+      aiRallyScore(a, a, Math.min(10, 100 - a.morale)) + rally(a);
+    const lose = aiImpact(a, a.troops * .1 * tacticalScale(d), duelMoraleLoss(d)) +
+      aiRallyScore(d, d, Math.min(10, 100 - d.morale)) + rally(d);
+    return { accept: chance * win - (1 - chance) * lose,
+      refuse: aiImpact(d, 0, duelMoraleLoss(a) * 2) };
+  }
+  function aiAcceptDuel(a, d) {
+    const scores = aiDuelScores(a, d);
+    // 도주하는 거부보다 승리할 여지가 있는 수락을 택한다.
+    if (d.morale <= duelMoraleLoss(a) * 2) return true;
+    return duelWinChance(d, a) >= .25 && scores.accept <= scores.refuse;
+  }
+  function aiExposure(u, point) {
+    const projected = { ...u, x: point.x, y: point.y };
+    const enemies = B.units.filter(e => e.alive && !e.dying && e.side !== u.side && !isConfused(e));
+    const support = alive(u.side).filter(a => a !== u && !a.dying && !isConfused(a) && mdist(a, point) <= 2).length;
+    return enemies.reduce((sum, e) => {
+      const dist = mdist(e, point), range = BRANCHES[e.branch].range;
+      const direct = attackReachable(e, projected);
+      const approaching = dist <= range + BRANCHES[e.branch].mov;
+      return sum + (direct ? 1 : approaching ? .2 : 0) * calcDamage(e, projected, 1);
+    }, 0) / (1 + support * .4);
+  }
+  // 난수를 소모하지 않고 모든 후보를 비교한다. 동료 평가에서는 연계를 재귀 평가하지 않는다.
+  function aiBestAction(u, coordinated = true) {
+    if (!B || B.over || !u || !u.alive || u.dying || u.acted || isConfused(u)) return null;
+    let best = null;
+    const offer = (type, target, score) => {
+      if (Number.isFinite(score) && score > 0 && (!best || score > best.score)) best = { type, target, score };
+    };
+    const valid = d => !d.dying && d.troops > 0 && d.morale > 0;
+    const foes = attackTargets(u).filter(valid);
+    for (const d of foes) offer('attack', d, aiAttackScore(u, d));
+    if (u.branch === '궁병' && fireLeft(u) > 0) for (const d of foes) {
+      const direct = calcDamage(u, d, 1) * FIRE_ARROW_RATE * (B.terrain[d.y][d.x] === 1 ? 1.5 : 1);
+      const rate = FIRE_BURN_RATE * tacticalScale(u) * (B.terrain[d.y][d.x] === 3 ? .5 : 1);
+      const ticks = Math.max(0, Math.min(FIRE_BURN_TURNS, B.maxRound - B.round));
+      const oldTicks = Math.min(ticks, d.burn || 0), oldRate = d.burnRate || 0;
+      const refresh = !d.burn || rate >= oldRate;
+      const extraBurn = refresh ? Math.max(0, Math.pow(1 - oldRate, oldTicks) - Math.pow(1 - rate, ticks)) : 0;
+      // 기존 화상에 더해지는 효과만 계산하고 남은 라운드가 없으면 지속 피해는 0.
+      const future = Math.max(0, d.troops - direct) * extraBurn * .8;
+      offer('fire', d, aiImpact(d, direct + future, 10 * tacticalScale(u)) - calcDamage(u, d, 1) * .06);
     }
-    const stratFoes = stratTargets(u, '혼란').sort((a, b) => a.troops - b.troops);
-    const stratFoe = stratFoes.find(x => !isConfused(x)) || stratFoes[0];
-    if (!u.noOfficer && stratFoe && u.officer.zhi >= stratFoe.officer.zhi - 8 && Math.random() < 0.22 + (sa.strat || 0)) {
-      doStratAct(u, stratFoe, isConfused(stratFoe) || Math.random() < 0.6 ? '화계' : '혼란');
-      return true;
-    }
-    const foes = attackTargets(u);
-    if (!foes.length) return false;
-    const weak = foes.slice().sort((a, b) => a.troops - b.troops)[0];
-    const adj = duelTargets(u);
-    if (adj.length && !u.dueled && !u.noOfficer && Math.random() < 0.35 && u.officer.wu > adj[0].officer.wu + 5) {
-      doDuel(u, adj[0]);
-      return true;
-    }
-    // 궁병은 불화살로 적을 불태운다 (숲에 있는 적을 우선 노린다)
-    if (u.branch === '궁병' && fireLeft(u) > 0 && Math.random() < 0.5) {
-      const ft = fireTargets(u);
-      if (ft.length) {
-        const woodScore = t => (B.terrain[t.y][t.x] === 1 ? 0 : 1);
-        doFireArrow(u, ft.slice().sort((a, b) => woodScore(a) - woodScore(b) || a.troops - b.troops)[0]);
-        return true;
+    if (!u.noOfficer) {
+      for (const d of stratTargets(u, '고무').filter(valid)) {
+        if (d.morale >= 65) continue;
+        offer('고무', d, aiRallyScore(u, d, Math.min(100 - d.morale, Math.round(18 * tacticalScale(u)))));
+      }
+      for (const d of stratTargets(u, '화계').filter(valid)) {
+        offer('화계', d, stratChance(u, d, '화계') * aiImpact(d, stratFireDamage(u, d, 250), 8.5 * tacticalScale(u)));
+        if (isConfused(d)) continue;
+        // 혼란은 행동 봉쇄와 아군의 안전한 후속 공격을 함께 평가한다.
+        const duration = Math.min(2 - confuseEscape(d), B.maxRound - B.round + (d.acted ? 0 : 1));
+        const victims = alive(u.side).filter(a => valid(a) && mdist(a, d) <= BRANCHES[d.branch].mov + BRANCHES[d.branch].range);
+        const threat = victims.reduce((max, a) => Math.max(max, calcDamage(d, a, 1)), 0);
+        const followup = victims.filter(a => a !== u && !a.acted && !isConfused(a) && meleeReachable(a, d))
+          .reduce((sum, a) => sum + aiCounterCost(a, d), 0);
+        offer('혼란', d, stratChance(u, d, '혼란') * (threat * duration * .8 + followup));
+      }
+      for (const d of duelTargets(u).filter(valid)) {
+        const scores = aiDuelScores(u, d);
+        // 사람은 응답을 직접 선택하므로 AI에 유리한 응답을 가정하지 않는다.
+        const score = d.side === B.playerSide && !B.auto ? Math.min(scores.accept, scores.refuse) :
+          (aiAcceptDuel(u, d) ? scores.accept : scores.refuse);
+        offer('duel', d, score);
       }
     }
-    // 보병은 인접한 보병·기병 동료와 함께 일제공격할 수 있다
-    const vol = volleyTargets(u);
-    if (vol.length && Math.random() < 0.45) {
-      doVolley(u, vol.slice().sort((a, b) => a.troops - b.troops)[0]);
-      return true;
+    if (!u.moved && u.branch === '기병' && !(u.side === 'def' && fortAt(u.x, u.y))) {
+      const exposure = aiExposure(u, u);
+      for (const dest of chargeOptions(u)) {
+        if (dest.through.some(p => !valid(p.unit))) continue;
+        const projected = { ...u, x: dest.x, y: dest.y };
+        const score = dest.through.reduce((sum, p) => sum + aiImpact(p.unit,
+          calcDamage(projected, p.unit, 1) * CHARGE_RATE * (CombatRules.talent(u).charge || 1), 4 * tacticalScale(u)), 0);
+        offer('charge', dest, score * .94 - Math.max(0, aiExposure(u, dest) - exposure) * .65);
+      }
     }
-    attackAct(u, weak);
+    if (coordinated) for (const d of volleyTargets(u).filter(valid)) {
+      const mates = volleyPartners(u, d);
+      const damage = calcDamage(u, d, 1) + mates.reduce((sum, a) => sum + calcDamage(a, d, 1) * VOLLEY_RATE, 0);
+      const scale = Math.min(1, [u, ...mates].reduce((sum, a) => sum + a.troops, 0) / 1000);
+      // 동료가 단독으로 더 좋은 계략·돌격·공격을 할 수 있다면 그 행동을 낭비하지 않는다.
+      const opportunity = mates.reduce((sum, a) => sum + (aiBestAction(a, false)?.score || 0), 0);
+      offer('volley', d, aiImpact(d, damage, 8.5 * scale) - opportunity - damage * .03);
+    }
+    return best;
+  }
+  function tryAct(u) {
+    const action = aiBestAction(u);
+    if (!action) return false;
+    const { type, target } = action;
+    if (type === 'attack') attackAct(u, target);
+    else if (type === 'fire') doFireArrow(u, target);
+    else if (type === 'charge') doCharge(u, target);
+    else if (type === 'volley') doVolley(u, target);
+    else if (type === 'duel') doDuel(u, target);
+    else doStratAct(u, target, type);
+    return true;
+  }
+  function aiNextUnit(units) {
+    let best = units[0], score = 0;
+    for (const u of units) {
+      const action = aiBestAction(u);
+      if (action && action.score > score) { best = u; score = action.score; }
+    }
+    return best;
+  }
+  // 공격이 닿지 않을 때는 이동 뒤의 특수공격·연계와 노출 위험으로 위치를 고른다.
+  function aiMoveToAction(u, current = null) {
+    const start = { x: u.x, y: u.y, moved: u.moved };
+    const exposure = aiExposure(u, u);
+    let best = null;
+    try {
+      for (const point of moveRange(u)) {
+        // 동기 평가 중에만 위치를 투영하고, 실행 전 원래 전장을 복원한다.
+        Object.assign(u, point, { moved: true });
+        const action = aiBestAction(u);
+        if (!action) continue;
+        const score = action.score * .96 - Math.max(0, aiExposure(u, point) - exposure) * .3;
+        if (score > (current?.score || 0) * 1.12 && (!best || score > best.score)) best = { ...point, score };
+      }
+    } finally {
+      Object.assign(u, start);
+    }
+    if (!best) return false;
+    moveUnitTo(u, best.x, best.y);
+    u.moved = true;
+    syncForts(true);
+    bLog('🚩 ' + u.name + ' 부대가 공격·연계에 유리한 위치로 이동');
     return true;
   }
 
@@ -3065,7 +3200,7 @@ const Battle = (function () {
             (u.branch === '보병' ? '<span class="badge2">일제공격 ' + volleyLeft(u) + '회 남음</span>' : '') +
             (u.branch === '기병' ? '<span class="badge2">일제공격 참여 ' + volleyLeft(u) + '회 남음</span>' : '') +
             (u.branch === '궁병' ? '<span class="badge2" style="color:#ffb070">불화살 ' + fireLeft(u) + '</span>' : '') +
-            (fortAt(u.x, u.y) ? '<span class="badge2" style="color:#ffd479">성 안 · 방어 +40% · 반격 피해 -25%</span>' : '') +
+            (fortAt(u.x, u.y) ? '<span class="badge2" style="color:#ffd479">성 안 · 방어 +40% · 반격 피해 -25%</span><p class="muted">인접한 적이 없으면 성벽 사격 · 사거리 2</p>' : '') +
             (sk ? '<span class="badge2" style="color:var(--gold)">' + u.officer.skill + '</span>' : '') + '</div>' +
           (trait?'<p class="muted">'+trait+'</p>':'') +
           '<div class="kv"><span>병력</span><b>' + commas(u.troops) + ' / ' + commas(u.max) + '</b>' +

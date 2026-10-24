@@ -698,7 +698,7 @@ for(const weighted of [false,true]) {
 pauseTimers=false;delete global.requestAnimationFrame;delete global.cancelAnimationFrame;
 console.log('장애물·지형 비용을 반영한 행군 경로 검사 완료');
 
-/* 공성 수비 AI: 실제 사격 입력 → 출격·동일 턴 반격, 위험하면 수성, 위협이 사라지면 복귀. */
+/* 성벽 사격: 실제 입력·AI·양 진영·근접 제한·성 밖 사거리·강 건너 사격을 검증한다. */
 {
   const previousRandom = Math.random;
   Math.random = () => .99; // 계략·일기토 대신 이동/일반 공격 판단을 고정한다.
@@ -729,12 +729,13 @@ console.log('장애물·지형 비용을 반영한 행군 경로 검사 완료')
   for (const branch of ['보병', '기병']) for (const fire of [false, true]) {
     const f = siegeFixture({ branch }), before = f.archer.troops;
     shoot(f, fire);
-    check(distance(f.defender, f.home) > 0 && distance(f.defender, f.archer) === 1,
-      branch + '/' + fire + ': 고립 궁병을 향한 출격 누락');
-    check(f.archer.troops < before, branch + '/' + fire + ': 출격 후 같은 턴 반격 누락');
-    check(f.b.log.some(l => l.includes('궁병을 요격하러 출격')), '수비 출격: 판단 로그 누락');
+    check(distance(f.defender, f.home) === 0,
+      branch + '/' + fire + ': 성벽 사격으로 대응할 수 있으면 성을 지켜야 함');
+    check(f.archer.troops < before, branch + '/' + fire + ': 성벽 사격으로 대응하지 않음');
+    check(f.b.log.some(l => l.includes('성벽 사격')), '성벽 사격: 공격 로그 누락');
     check(f.b.forts[0].owner === 'def', '수비 출격: 빈 성의 수비 깃발이 사라짐');
-    // 궁병이 멀리 철수하면 무작정 추격하지 않고 방금 비운 성으로 돌아간다.
+    // 성 밖으로 나간 수비대도 궁병이 철수하면 성으로 돌아간다.
+    Object.assign(f.defender, { x: 7, y: 4 });
     Object.assign(f.archer, { x: 0, y: 4 }); f.b.busy = false;
     pauseTimers = false; Battle.act('nextTurn'); pauseTimers = true;
     check(distance(f.defender, f.home) === 0, '수비 출격: 사격 위협 해소 후 성 복귀 실패');
@@ -767,9 +768,83 @@ console.log('장애물·지형 비용을 반영한 행군 경로 검사 완료')
     shoot(f);
     check(distance(f.defender, f.home) === 0, '사기가 낮은 수비군은 출격을 삼가야 함');
   }
+  function selectDefender(f) {
+    Object.assign(f.b, { playerSide: f.defender.side, side: f.defender.side,
+      sel: f.defender, busy: false, mode: 'select' });
+  }
+  const canAttack = (f, unit) => Battle.observation().tiles.some(t =>
+    t.x === unit.x && t.y === unit.y && t.action === 'attack');
+  function arrowDamage(branch, form, enemy, ordinary = false) {
+    const f = siegeFixture({ branch });
+    f.defender.form = form; f.archer.branch = enemy;
+    if (ordinary) { f.defender.y = 3; f.archer.y = 3; }
+    selectDefender(f);
+    const before = f.archer.troops;
+    Battle.act('atk'); Battle.clickCell(f.archer.x, f.archer.y);
+    return before - f.archer.troops;
+  }
+  for (const form of ['방원', '봉시', '학익']) for (const enemy of ['보병', '기병', '궁병']) {
+    const normal = arrowDamage('궁병', form, enemy, true);
+    for (const branch of ['보병', '기병']) check(arrowDamage(branch, form, enemy) === normal,
+      branch + '/' + form + ' → ' + enemy + ': 성벽 사격 피해가 같은 조건의 일반 궁병과 달라짐');
+  }
+  for (const side of ['atk', 'def']) for (const branch of ['보병', '기병']) {
+    const f = siegeFixture({ branch });
+    f.defender.side = side; f.archer.side = side === 'atk' ? 'def' : 'atk'; f.b.forts[0].owner = side;
+    selectDefender(f);
+    check(canAttack(f, f.archer), side + '/' + branch + ': 사거리 2 성벽 사격 대상 표시 누락');
+    const before = f.archer.troops, ownBefore = f.defender.troops, soundsBefore = soundEvents.length;
+    global.requestAnimationFrame = () => 1; global.cancelAnimationFrame = () => {};
+    Battle.act('atk'); Battle.clickCell(f.archer.x, f.archer.y);
+    check(f.archer.troops < before && f.defender.acted, '성벽 사격: 일반 공격으로 피해·행동 소모 필요');
+    check(f.defender.troops === ownBefore, '성벽 사격: 원거리 공격에 근접 반격이 발생함');
+    check(soundEvents.slice(soundsBefore).some(e => e.name === 'arrow'), '성벽 사격: 화살 효과음 누락');
+    check(f.b.fx.some(e => e.type === 'arrow'), '성벽 사격: 화살 연출 누락');
+    check(f.defender.fire === 0, '성벽 사격: 비궁병에게 불화살 능력이 생기면 안 됨');
+    delete global.requestAnimationFrame; delete global.cancelAnimationFrame;
+  }
+  {
+    const f = siegeFixture({ extras: [{ branch: '보병', troops: 5000, x: 8, y: 3 }] });
+    selectDefender(f);
+    check(!canAttack(f, f.archer) && canAttack(f, f.b.units[1]),
+      '인접한 적이 있으면 비궁병의 원거리 공격을 막고 근접 공격만 허용해야 함');
+    const before = f.archer.troops;
+    Battle.act('atk'); Battle.clickCell(f.archer.x, f.archer.y);
+    check(f.archer.troops === before && !f.defender.acted, '근접 중 성벽 사격 금지 우회');
+    f.b.units[1].alive = false; f.b.mode = 'select';
+    check(canAttack(f, f.archer), '인접한 적이 사라지면 성벽 사격이 다시 가능해야 함');
+  }
+  {
+    const f = siegeFixture({ branch: '궁병', extras: [{ branch: '보병', troops: 5000, x: 8, y: 3 }] });
+    selectDefender(f);
+    check(canAttack(f, f.archer), '궁병 고유 사거리는 인접한 적이 있어도 유지해야 함');
+  }
+  {
+    const f = siegeFixture(); selectDefender(f);
+    f.archer.x = 5;
+    check(!canAttack(f, f.archer), '성벽 사격은 사거리 3까지 닿으면 안 됨');
+    f.archer.x = 6; f.archer.y = 3; f.defender.y = 3;
+    check(!canAttack(f, f.archer), '성 밖 보병은 사거리 2 공격을 하면 안 됨');
+    f.defender.branch = '기병';
+    check(!canAttack(f, f.archer), '성 밖 기병은 사거리 2 공격을 하면 안 됨');
+  }
+  {
+    const f = siegeFixture(); selectDefender(f);
+    f.b.terrain.forEach(row => { row[7] = 4; });
+    check(canAttack(f, f.archer), '성벽 사격은 강 건너 사거리 2의 적을 공격할 수 있어야 함');
+    const before = f.archer.troops;
+    Battle.clickCell(f.archer.x, f.archer.y);
+    check(f.archer.troops < before, '강 건너 성벽 사격 실행 실패');
+  }
+  {
+    const f = siegeFixture(); selectDefender(f); f.defender.x = 9;
+    Battle.act('move'); Battle.clickCell(8, 4);
+    check(f.defender.moved && !f.defender.acted && canAttack(f, f.archer),
+      '성으로 이동한 턴에도 성벽 사격이 가능해야 함');
+  }
   Math.random = previousRandom; pauseTimers = false;
 }
-console.log('공성 수비군의 궁병 요격·위험 판단·성 복귀 검사 완료');
+console.log('성벽 사격·근접 제한·공성 AI 응전·성 복귀 검사 완료');
 
 console.log(errors === 0 ? '\n[OK] 전투 테스트 통과' : '\n[FAIL] 오류 ' + errors + '건');
 process.exit(errors === 0 ? 0 : 1);
