@@ -119,7 +119,7 @@ function diploAnnex(id) {
 }
 function openPolicies() {
   if(!strategyReady()) return;
-  const automation = '<h3>' + (G.pf ? '전체위임' : '전체 AI 관전') + '</h3><p class="muted">내정·외교·등용·병력 이동·출진·수비·전투와 다음 달 진행까지 AI가 처리합니다. 상단 버튼으로 일시정지하거나 재개할 수 있습니다.</p>' +
+  const automation = '<h3>' + (G.pf ? '전체위임' : '전체 AI 관전') + '</h3><p class="muted">내정·외교·등용·병력 이동·출진·수비·전투와 다음 달 진행까지 AI가 처리합니다. ' + (G.pf ? '상단 [전체위임 해제]를 누르면 남은 명령권으로 직접 지휘할 수 있습니다.' : '상단 버튼으로 일시정지하거나 재개할 수 있습니다.') + '</p>' +
     (G.pf ? '<button class="primary" onclick="Game.setFullDelegation(' + !G.fullDelegation + ')">' + (G.fullDelegation ? '전체위임 해제 · 직접 지휘' : '전체위임 시작') + '</button>' : '<button class="primary" onclick="Game.toggleAutoPlay()">AI 자동 진행 재개</button>');
   showModal(automation + (G.pf ? '<h3>도시 위임</h3><p class="muted">턴 종료 시 남은 명령권으로 도시당 1회 실행합니다. 직접 명령과 같은 금·무장 행동을 사용합니다. 후방 지원은 인접한 전방 방향 도시로 수송합니다. 전체위임 중에는 AI가 모든 도시의 운영 방침을 결정합니다.</p>'+factionCities(G.pf).map(n=>{
     const c=G.cities[n];return '<div class="row"><b>'+n+'</b><select aria-label="'+n+' 위임 방침" onchange="Game.setPolicy(\''+n+'\',this.value)">'+Object.entries(CITY_POLICIES).map(([id,label])=>'<option value="'+id+'"'+((c.policy||'manual')===id?' selected':'')+'>'+label+'</option>').join('')+'</select><span class="muted" id="policyPreview_'+n+'">'+policyPlan(c).label+'</span></div>';

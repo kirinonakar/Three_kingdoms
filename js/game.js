@@ -412,9 +412,11 @@ let hover = null;          // 마우스 오버 도시
 let cvM = null, ctxM = null;
 let attackIntro = null;
 let modalLocked = false;   // 타이틀 화면처럼 닫기(×·Esc)를 막아야 하는 창
+let modalAutoResume = null; // 창을 보기 위해 잠시 멈춘 전체위임
 let autoPlayTimer = null;
 let campaignEpoch = 0;     // 타이틀 이동·새 게임·불러오기 전의 비동기 작업 무효화
 let pausedAI = null;       // 현재 달에서 중단한 AI 행동의 다음 단계
+let delegationCancelRequested = false;
 
 function pauseAI(next) {
   if (!G.autoPaused || !G.aiRunning || !(G.fullDelegation || !G.pf)) return false;
@@ -438,6 +440,14 @@ function scheduleAutoPlay() {
     endTurn();
   }, 700);
 }
+function resumeAutoPlay() {
+  const pending = pausedAI; pausedAI = null;
+  if (pending && pending.game === G && pending.epoch === campaignEpoch) {
+    setTimeout(() => {
+      if (G === pending.game && campaignEpoch === pending.epoch && !pauseAI(pending.next)) pending.next();
+    }, 0);
+  } else if (!G.aiRunning) scheduleAutoPlay();
+}
 function toggleAutoPlay() {
   if (!G || G.over || !(G.fullDelegation || !G.pf)) return;
   G.autoPaused = !G.autoPaused;
@@ -450,18 +460,29 @@ function toggleAutoPlay() {
   }
   if (!G.autoPaused) {
     closeModal();
-    const pending = pausedAI; pausedAI = null;
-    if (pending && pending.game === G && pending.epoch === campaignEpoch) {
-      setTimeout(() => {
-        if (G === pending.game && campaignEpoch === pending.epoch && !pauseAI(pending.next)) pending.next();
-      }, 0);
-    } else if (!G.aiRunning) scheduleAutoPlay();
+    resumeAutoPlay();
   }
   renderTop();
   toast(G.autoPaused ? 'AI 자동 진행을 일시정지했습니다' : 'AI 자동 진행을 재개합니다');
 }
 function setFullDelegation(on) {
-  if (!strategyReady() || !G.pf) return;
+  if (!G || G.over || !G.pf || !!on === G.fullDelegation) return;
+  if (!on && G.fullDelegation && G.aiRunning && !G.battleActive) {
+    delegationCancelRequested = true;
+    G.autoPaused = false;
+    clearAutoPlay();
+    const pending = pausedAI; pausedAI = null;
+    closeModal();
+    renderTop();
+    // 출진 병력은 이미 차감되었으므로 확정된 전투 하나는 마친 뒤 지휘권을 돌려준다.
+    if (attackIntro && attackIntro.next) {
+      const next = attackIntro.next;
+      stopAttackIntro();
+      next();
+    } else if (pending && pending.game === G && pending.epoch === campaignEpoch) pending.next();
+    return;
+  }
+  if (!strategyReady()) return;
   G.fullDelegation = !!on;
   G.autoPaused = false;
   clearAutoPlay();
@@ -470,6 +491,22 @@ function setFullDelegation(on) {
   log(on ? '전체위임: 내정·외교·군사·전투와 월 진행을 AI에 맡깁니다.' : '전체위임을 해제하고 직접 지휘합니다.', 'good');
   renderAll();
   if (on) scheduleAutoPlay();
+}
+function returnDirectControl() {
+  if (!delegationCancelRequested) return false;
+  delegationCancelRequested = false;
+  clearAutoPlay(); pausedAI = null; campaignEpoch++;
+  G.aiRunning = false;
+  G.fullDelegation = false;
+  G.autoPaused = false;
+  refreshCmd(false);
+  const f = G.factions[G.pf];
+  G.cmd = cl(f.commandTurn === G.turn ? f.commands : G.cmd, 0, G.cmdMax);
+  G.ui = {};
+  closeModal();
+  log('전체위임을 해제하고 직접 지휘합니다. 남은 명령권 ' + G.cmd + '개.', 'good');
+  renderAll();
+  return true;
 }
 
 /* 사운드 헬퍼 — audio.js 가 없거나 초기화 전이어도 게임 진행에는 영향이 없다 */
@@ -512,7 +549,7 @@ function syncOfficers() {
 function newGame(pf, scenarioId = '194') {
   const scenario = scenarioById(scenarioId), cityDefs = scenarioCities(scenario);
   if (pf !== null && !cityDefs.some(c=>c[4]===pf)) return;
-  clearAutoPlay(); pausedAI = null; campaignEpoch++;
+  clearAutoPlay(); pausedAI = null; delegationCancelRequested = false; campaignEpoch++;
   stopAttackIntro();
   const factionDefs = scenarioFactions(scenario);
   const factions = {}, cities = {}, officers = [];
@@ -941,9 +978,14 @@ function renderTop() {
   if ($('btnOfficers')) $('btnOfficers').disabled = busy && !G.autoPaused;
   const auto = $('btnAutoPlay');
   if (auto) {
-    auto.hidden = !(G.fullDelegation || !G.pf);
-    auto.disabled = !!G.over;
+    auto.hidden = !!G.pf;
+    auto.disabled = !!G.over || delegationCancelRequested;
     auto.textContent = G.autoPaused ? 'AI 자동 진행 재개' : 'AI 자동 진행 일시정지';
+  }
+  const cancel = $('btnCancelDelegation');
+  if (cancel) {
+    cancel.hidden = !G.pf || !G.fullDelegation;
+    cancel.disabled = !!G.over || !!G.battleActive || delegationCancelRequested;
   }
   const b = $('btnEndTurn');
   if (b) b.disabled = !!G.over || busy || G.fullDelegation || !G.pf;
@@ -2598,6 +2640,7 @@ function selectCity(name) {
 function showModal(html, opts) {
   const m = $('modalRoot'); if (!m) return;
   if (G && !G.over && (G.fullDelegation || !G.pf)) {
+    if (G.pf && G.fullDelegation && !G.autoPaused) modalAutoResume = {game:G, epoch:campaignEpoch};
     G.autoPaused = true; clearAutoPlay(); renderTop();
   }
   const titleMode = !!(document.body && document.body.classList.contains('title'));
@@ -2627,6 +2670,13 @@ function closeModal() {
   if (mv && !mv.picking) { mv.picking = true; syncMoveHint(); drawMap(); }
   const at = G && G.ui ? G.ui.attack : null;
   if (at && !at.picking) { at.picking = true; syncMoveHint(); drawMap(); }
+  const resume = modalAutoResume; modalAutoResume = null;
+  if (resume && resume.game === G && resume.epoch === campaignEpoch &&
+      !G.over && G.fullDelegation && G.autoPaused) {
+    G.autoPaused = false;
+    resumeAutoPlay();
+    renderTop();
+  }
 }
 
 /* ── 무장 선택 모달 ──────────────────────────────────── */
@@ -4373,7 +4423,7 @@ function startSpectator(scenarioId = chosenScenario) {
   scheduleAutoPlay();
 }
 function reset() {
-  clearAutoPlay(); pausedAI = null; campaignEpoch++;
+  clearAutoPlay(); pausedAI = null; delegationCancelRequested = false; campaignEpoch++;
   stopAttackIntro();
   closeModal();
   G = null;
@@ -4385,7 +4435,7 @@ function reset() {
   startScreen();
 }
 function toTitle() {
-  clearAutoPlay(); pausedAI = null; campaignEpoch++;
+  clearAutoPlay(); pausedAI = null; delegationCancelRequested = false; campaignEpoch++;
   stopAttackIntro();
   if (G) G.autoPaused = true;
   closeModal();
@@ -4437,6 +4487,7 @@ function endTurn() {
   let i = 0;
   const next = () => {
     if (G !== game || campaignEpoch !== epoch) return;
+    if (returnDirectControl()) return;
     if (G.over) { G.aiRunning = false; renderTop(); return; }
     if (pauseAI(next)) return;
     if (i >= ids.length) { finishTurn(); return; }
@@ -4727,6 +4778,7 @@ function runFactionAI(fid, done) {
   const key=a=>[a.t,a.cn,a.stat||a.target||a.from||a.name||''].join(':');
   const step=()=>{
     if(G!==game||campaignEpoch!==epoch)return;
+    if(returnDirectControl())return;
     if(G.over){done();return;}
     if(pauseAI(step))return;
     if(aiCommands(fid)<=0||attempts++>=limit){done();return;}
@@ -5210,7 +5262,7 @@ function openHelp() {
     '<p><b>목표</b> : 기본 목표는 모든 도시 점령입니다. 새 게임 첫 명령 전 [위임·목표] → [승리 목표]에서 패권·24개월 도전·시나리오 목표도 선택할 수 있습니다.</p>' +
     '<p><b>야전과 공성</b> : 출진 편성의 [공략 방식]에서 야전 선행 / 바로 공성 / 수비군 판단을 고릅니다. 수비 편성에서는 [수비 방침]으로 야전 요격 또는 농성을 선택합니다. 야전에서 수비군이 이기면 침공을 막습니다. 공격군 승리 또는 [성으로 후퇴] 시 생존 부대와 예비 병력으로 공성을 이어가며, 군량은 누적 차감됩니다. 예비 병력을 지정하지 않았다면 기존 수비군의 25%를 성에 남겨 공성을 대비합니다. 야전 승리 후에는 공성에서 승리해야 도시를 점령합니다.</p>' +
     '<p><b>도시 위임</b> : [위임·목표]에서 농업·상업·군사·최전선·후방 지원을 지정합니다. 턴 종료 시 남은 명령권으로 도시당 한 번 실행하며 금·무장 행동을 사용합니다.</p>' +
-    '<p><b>전체위임·AI 관전</b> : [위임·목표] → [전체위임 시작]으로 내정·외교·군사·전투와 월 진행을 AI에 맡길 수 있습니다. 타이틀의 [전체 AI 관전]은 세력 선택 없이 모든 세력을 AI가 운영합니다. 상단 버튼으로 일시정지·재개할 수 있고, 창을 열면 자동 진행이 일시정지합니다. 전체위임은 위임 메뉴에서 해제할 수 있습니다.</p>' +
+    '<p><b>전체위임·AI 관전</b> : [위임·목표] → [전체위임 시작]으로 내정·외교·군사·전투와 월 진행을 AI에 맡길 수 있습니다. 세력을 선택했다면 상단 [전체위임 해제] 또는 위임 메뉴에서 직접 지휘로 돌아올 수 있으며, 이미 실행한 행동과 소모한 명령권은 유지됩니다. 타이틀의 [전체 AI 관전]은 세력 선택 없이 모든 세력을 AI가 운영합니다. 관전에서는 상단 버튼으로 일시정지·재개할 수 있습니다. 전체위임 중 창을 열면 잠시 멈추고 닫으면 이어서 진행합니다.</p>' +
     '<p><b>장수 개성</b> : 제갈량·관우·장비·조조·주유·여포는 고유 능력이 있습니다. 무장 일람과 부대 설명에서 확인합니다. 12개 관계 조합은 같은 전장의 병력 1,000명 이상인 상대 장수가 있어야 보너스를 제공합니다.</p>' +
     '<p><b>턴 진행</b> : 한 달에 명령권 = 보유 도시 수 + 2. 명령을 쓰고 [턴 종료]를 누르면 AI 세력이 움직이고 월간 수입·이벤트가 처리됩니다. <b>첫 2개월은 AI가 공격해 오지 않습니다.</b></p>' +
     '<p><b>무장 행동</b> : 각 무장은 한 달에 한 번만 명령에 참여할 수 있습니다(내정·군사·등용). 이미 참여한 무장은 도시 패널에서 흐리게 표시되며, 다음 달에 다시 활동할 수 있습니다. 포상·외교는 무장 행동을 소모하지 않습니다.</p>' +
@@ -5396,7 +5448,7 @@ function loadGame(slot, kind = 'auto') {
 function restoreSave(data,label) {
   const previous=G;
   try {
-    clearAutoPlay(); pausedAI = null; campaignEpoch++;
+    clearAutoPlay(); pausedAI = null; delegationCancelRequested = false; campaignEpoch++;
     stopAttackIntro();
     G = data;
     G.scenario = G.scenario || '194';

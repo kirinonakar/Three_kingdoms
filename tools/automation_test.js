@@ -46,6 +46,8 @@ for (const scenario of ['194','200','208','219','virtual']) {
   const g=Game.state;
   assert.equal(g.pf,null); assert.equal(g.cmd,0); assert.equal(g.cmdMax,0);
   assert.equal(g.scenario,scenario); assert.equal(el('facName').textContent,'전체 AI 관전');
+  assert.equal(el('btnCancelDelegation').hidden,true,'spectator has no faction to take over');
+  assert.equal(el('btnAutoPlay').hidden,false,'spectator keeps the pause/resume control');
   const turns=24;
   until(()=>g.turn>=turns||g.over,scenario+' observation');
   Game.toggleAutoPlay();
@@ -81,6 +83,53 @@ Game.setFullDelegation(false); assert(!g.fullDelegation);
 const commands=g.cmd;
 Game.confirmSupply('허창',100); assert.equal(g.cmd,commands-1,'direct orders resume after releasing delegation');
 drain(); assert.equal(g.turn,1,'direct control must not advance automatically');
+
+// Browsing officers temporarily pauses delegation and resumes it on close.
+for (const midMonth of [false,true]) {
+  g=fresh(); Game.setFullDelegation(true);
+  if(midMonth) Game.endTurn();
+  Game.openOfficers(); assert(g.autoPaused); drain();
+  const browsing=JSON.stringify(g); drain(); assert.equal(JSON.stringify(g),browsing);
+  Game.openOfficers(true); Game.openOfficers(false);
+  Game.closeModal(); assert(!g.autoPaused,'closing officers must resume running delegation');
+  Game.closeModal(); // Repeated close must not replay a saved AI continuation.
+  until(()=>g.turn===1,'delegation after closing officers');
+  Game.setFullDelegation(false); drain(); assert.equal(g.turn,1);
+}
+g=fresh(); Game.setFullDelegation(true); Game.endTurn(); Game.toggleAutoPlay(); drain();
+Game.openOfficers(); Game.closeModal();
+const manuallyPaused=JSON.stringify(g); drain();
+assert(g.autoPaused); assert.equal(JSON.stringify(g),manuallyPaused,'an existing explicit pause must remain paused');
+Game.setFullDelegation(false); drain();
+g=fresh(); Game.setFullDelegation(true); Game.openOfficers();
+g=fresh(); const replacement=JSON.stringify(g); drain();
+assert.equal(JSON.stringify(g),replacement,'closing an old officer list must not resume a replacement game');
+console.log('[OK] officer list close resumes delegation between and during months, preserves explicit pause, and ignores old games');
+
+// Release control at an AI action boundary, with or without pausing first.
+for (const paused of [false,true]) {
+  g=fresh(); Game.setFullDelegation(true); Game.endTurn();
+  assert(g.aiRunning); assert.equal(el('btnCancelDelegation').hidden,false);
+  assert.equal(el('btnAutoPlay').hidden,true,'selected faction shows cancellation instead of pause');
+  assert.equal(el('btnCancelDelegation').disabled,false,'cancel remains available while AI is running');
+  if(paused) {Game.toggleAutoPlay();drain();}
+  const turn=g.turn, remaining=g.factions.cao.commands;
+  const used=g.officers.filter(o=>o.faction==='cao'&&o.used).map(o=>o.name);
+  assert(remaining>0 && remaining<g.cmdMax,'exercise a partially used command budget');
+  assert(used.length>0,'AI must have performed an officer action before cancellation');
+  Game.setFullDelegation(false); until(()=>!g.aiRunning,'cancel delegation'); drain();
+  assert(!g.fullDelegation && !g.autoPaused); assert.equal(g.turn,turn);
+  assert.equal(g.cmd,remaining,'return only unspent commands');
+  assert.equal(el('btnCancelDelegation').hidden,true); assert.equal(el('btnEndTurn').disabled,false);
+  for(const name of used) assert(g.officers.find(o=>o.name===name).used,'cancellation must not reset officer actions');
+  const beforeFood=g.factions.cao.food;
+  Game.confirmSupply('허창',100);
+  assert.equal(g.cmd,remaining-1); assert.equal(g.factions.cao.food,beforeFood+200);
+  Game.saveGame(false,3); Game.loadGame(3,'manual'); g=Game.state; drain();
+  assert(!g.fullDelegation); assert.equal(g.cmd,remaining-1); assert.equal(g.turn,turn);
+  Game.endTurn(); until(()=>g.turn===turn+1,'manual turn after cancellation'); drain();
+  assert.equal(g.turn,turn+1,'cancelled callbacks cannot finish an extra month');
+}
 
 g=fresh(); Game.setFullDelegation(true); Game.endTurn();
 assert(g.aiRunning); Game.toggleAutoPlay(); assert(g.autoPaused);
@@ -164,6 +213,29 @@ assert.equal(JSON.stringify(g),frozen); assert.equal(completed,0,'battle continu
 Game.toggleAutoPlay(); until(()=>completed===1,'resume paused intro battle');
 Game.toggleAutoPlay(); drain(); assert.equal(completed,1,'resume must resolve the committed battle exactly once');
 console.log('[OK] animated attack pause: toolbar stays interactive, overlay clears immediately, battle resumes once');
+
+// Cancelling during a committed attack settles it once before returning command.
+vm.runInContext(`
+  const originalCancelCandidates=aiActionCandidates, originalCancelFinish=finishBattle;
+  let cancelledBattles=0;
+  aiActionCandidates=(fid,ledger)=>fid==='cao'&&!ledger['attack:허창']?
+    [{t:'attack',cn:'허창',target:'낙양',troops:4000}]:[];
+  finishBattle=(ctx,result)=>{cancelledBattles++;originalCancelFinish(ctx,result);};
+`,sandbox);
+for(const paused of [false,true]) {
+  g=fresh(); Game.setFullDelegation(true); Game.endTurn();
+  assert(g.ui.attackIntro); assert.equal(el('btnCancelDelegation').disabled,false);
+  const beforeBattles=vm.runInContext('cancelledBattles',sandbox), beforeStarts=battleStarts;
+  const remaining=g.factions.cao.commands;
+  if(paused) {Game.toggleAutoPlay();drain();}
+  Game.setFullDelegation(false); until(()=>!g.aiRunning,'cancel committed attack'); drain();
+  assert(!g.fullDelegation && !g.ui.attackIntro); assert.equal(g.turn,0);
+  assert.equal(g.cmd,remaining); assert.equal(battleStarts,beforeStarts);
+  assert.equal(vm.runInContext('cancelledBattles',sandbox),beforeBattles+1);
+  const afterCancel=JSON.stringify(g); drain(); assert.equal(JSON.stringify(g),afterCancel);
+}
+vm.runInContext('aiActionCandidates=originalCancelCandidates;finishBattle=originalCancelFinish;',sandbox);
+console.log('[OK] selected-faction cancellation restores unspent commands, keeps used officers, and settles committed attacks once');
 
 // A field choice after the invasion preview needs both armies meeting in the middle.
 g=fresh();timers.clear();

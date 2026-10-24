@@ -575,7 +575,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
   .tb-actions button.icoBtn{width:44px}
   .tb-actions #btnHelp{display:block}
   #btnEndTurn{position:sticky;right:0;order:-2;margin-right:0;z-index:2}
-  #btnAutoPlay:not([hidden]){position:sticky;left:0;order:-3;z-index:3;background:#473219;border-color:var(--gold2)}
+  #btnAutoPlay:not([hidden]),#btnCancelDelegation:not([hidden]){position:sticky;left:0;order:-3;z-index:3;background:#473219;border-color:var(--gold2)}
   #app>main{overflow:hidden;min-height:0}
   #mapWrap{flex:1;min-height:0;padding:8px;overflow:hidden}
   #mapCanvas{width:auto;height:auto;max-width:100%;max-height:100%;border-radius:10px}
@@ -691,6 +691,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
       <button id="btnTitle" class="ghost" onclick="Game.toTitle()" title="타이틀 화면으로 돌아가기">타이틀로</button>
       <button id="btnPolicies" onclick="Game.openPolicies()">위임·목표</button>
       <button id="btnAutoPlay" onclick="Game.toggleAutoPlay()" hidden>AI 자동 진행 일시정지</button>
+      <button id="btnCancelDelegation" onclick="Game.setFullDelegation(false)" hidden>전체위임 해제</button>
       <button id="btnHelp" class="ghost" onclick="Game.openHelp()" title="도움말">도움말</button>
       <button id="btnEndTurn" class="primary" onclick="Game.endTurn()">턴 종료 <span class="arrow">▶</span></button>
     </div>

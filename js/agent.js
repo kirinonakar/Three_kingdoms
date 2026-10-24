@@ -60,7 +60,7 @@ window.GameAgent = (function () {
       const label = el.labels && Array.from(el.labels).map(text).join(' ');
       const name = el.getAttribute('aria-label') || label || text(el) || el.title || el.id;
       const disabled = !!el.disabled || el.getAttribute('aria-disabled') === 'true' ||
-        (waiting && !['bAuto', 'bBgm', 'bSfx', 'btnAutoPlay', 'btnTitle'].includes(el.id));
+        (waiting && !['bAuto', 'bBgm', 'bSfx', 'btnAutoPlay', 'btnCancelDelegation', 'btnTitle'].includes(el.id));
       const c = { id, type, name, disabled };
       if (el.id) c.domId = el.id;
       if (row) c.context = text(row);
