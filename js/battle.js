@@ -1101,7 +1101,7 @@ const Battle = (function () {
       return;
     }
     if (aiSwitchForm(u)) { afterAction(); return; }   // 행동을 써서 진형을 바꾼 경우 이번 턴 종료
-    // 성 임무 — 수비대는 성을 비우지 않고, 그 자리에서 응전한다
+    // 성 임무 — 성에서 응전하거나, 안전하게 닿을 수 있는 궁병을 요격한다.
     const duty = fortDuty(u);
     if (duty && duty.hold) {
       if (tryAct(u)) return;                // 성 위에서 응전
@@ -1114,7 +1114,7 @@ const Battle = (function () {
       return;
     }
     if (tryAct(u)) return;                // 사거리 내 적 → 계략/일기토/공격
-    if (!u.moved) moveToward(u);          // 적에게 접근
+    if (!u.moved) moveToward(u, duty);    // 판단한 출격 위치 또는 성 임무로 이동
     if (!u.moved && u.branch === '기병') {
       // 길이 막혔으면 적진을 뚫고 돌격한다
       const opts = chargeOptions(u);
@@ -1190,7 +1190,43 @@ const Battle = (function () {
     return true;
   }
 
-  // 성 임무 — 수비측은 성을 비우지 않고, 공격측은 점령한 성에 머물지 않고 남은 성을 계속 노린다
+  // 성 밖 궁병을 같은 턴에 때릴 수 있을 때만 짧게 출격한다.
+  // 이동 후보는 실제 이동/공격 규칙을 쓰므로 물길·여울·점유 부대를 모두 반영한다.
+  function fortSortie(u, home) {
+    if (u.moved || u.morale < 35 || attackTargets(u).length) return null;
+    const foes = alive('atk').filter(e => !e.dying);
+    const archers = foes.filter(e => e.branch === '궁병' && attackTargets(e).includes(u));
+    if (!archers.length) return null;
+    const allies = alive('def').filter(a => a !== u && !a.dying && !isConfused(a));
+    const reachable = moveRange(u);
+    let best = null;
+    for (const target of archers) {
+      // 궁병을 미끼로 다른 부대가 빈 성을 밟을 수 있으면 수성을 우선한다.
+      const exposed = foes.some(e => e !== target && !isConfused(e) &&
+        costField(e, home.x, home.y)[e.y * COLS + e.x] <=
+          BRANCHES[e.branch].mov + ((FORMS[e.form] || {}).mov || 0));
+      if (exposed) continue;
+      for (const p of reachable) {
+        if (mdist(home, p) > 3) continue;
+        const fighter = { ...u, x: p.x, y: p.y };
+        if (!attackTargets(fighter).includes(target)) continue;
+        const threats = foes.filter(e => mdist(e, p) <= 3);
+        const support = allies.filter(a => mdist(a, p) <= 2);
+        const ownPower = CombatRules.power(fighter, alive('def'), { opponents: threats }) +
+          support.reduce((sum, a) => sum + CombatRules.power(a, alive('def'), { opponents: threats }) * .5, 0);
+        const enemyPower = threats.reduce((sum, e) => sum +
+          CombatRules.power(e, foes, { opponents: [fighter] }) * (isConfused(e) ? .35 : 1), 0);
+        // 성의 방어 이점을 버려도 감당할 수 있는 국지 전력일 때만 출격한다.
+        if (ownPower < enemyPower * .9) continue;
+        const score = ownPower / Math.max(1, enemyPower) +
+          [0, .15, .25, .4, 0, -.15][B.terrain[p.y][p.x]] - mdist(home, p) * .15;
+        if (!best || score > best.score) best = { x: p.x, y: p.y, score };
+      }
+    }
+    return best;
+  }
+
+  // 성 임무 — 수비측은 제한 출격 후 성으로 복귀하고, 공격측은 남은 성을 계속 노린다.
   function fortDuty(u) {
     const forts = fortTiles();
     if (!forts.length) return null;
@@ -1207,6 +1243,8 @@ const Battle = (function () {
       const stray = forts.filter(f => f.owner === foe && !unitAt(f.x, f.y))
         .sort((a, b) => mdist(u, a) - mdist(u, b))[0];
       if (stray && mdist(u, stray) <= 2 && !B.units.some(e=>e.alive&&e.side!==u.side&&mdist(e,here)<=3)) return { hold: false, fort: stray };
+      const sortie = fortSortie(u, here);
+      if (sortie) return { hold: false, fort: here, sortie };
       return { hold: true, fort: here };                                    // 수비 중
     }
     const lost = forts.filter(f => f.owner === foe);                       // 빼앗긴 성
@@ -1272,9 +1310,10 @@ const Battle = (function () {
   }
 
   // 성 임무가 있으면 그 성으로, 없으면 가장 가까운 적에게 한 번 이동한다
-  function moveToward(u) {
-    const duty = fortDuty(u);
-    if (duty && duty.hold) return false;                  // 수비대는 성을 비우지 않는다
+  function moveToward(u, duty = fortDuty(u)) {
+    if (duty && duty.hold) return false;
+    if (duty && duty.sortie) return moveStepToward(u, duty.sortie.x, duty.sortie.y,
+      u.name + ' 부대가 성 밖 궁병을 요격하러 출격');
     if (duty) {
       const f = duty.fort;
       return moveStepToward(u, f.x, f.y,

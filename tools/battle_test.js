@@ -698,5 +698,78 @@ for(const weighted of [false,true]) {
 pauseTimers=false;delete global.requestAnimationFrame;delete global.cancelAnimationFrame;
 console.log('장애물·지형 비용을 반영한 행군 경로 검사 완료');
 
+/* 공성 수비 AI: 실제 사격 입력 → 출격·동일 턴 반격, 위험하면 수성, 위협이 사라지면 복귀. */
+{
+  const previousRandom = Math.random;
+  Math.random = () => .99; // 계략·일기토 대신 이동/일반 공격 판단을 고정한다.
+  const distance = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  function siegeFixture({ branch = '보병', troops = 10000, extras = [] } = {}) {
+    pauseTimers = true;
+    const unit = (n, br) => ({ troops: n, branch: br, training: 80, morale: 90,
+      form: br === '궁병' ? '학익' : '방원' });
+    Battle.start({ siege: true, city: Game.state.cities['낙양'], playerSide: 'atk', auto: false,
+      atk: { name: '공격', color: '#4a6fd6', units: [unit(5000, '궁병'), ...extras.map(e => unit(e.troops, e.branch))] },
+      def: { name: '수비', color: '#9a5a5a', units: [unit(troops, branch)] }, onEnd() {} });
+    const b = Battle.state, archer = b.units[0], defender = b.units.at(-1);
+    b.terrain = Array.from({ length: 9 }, () => Array(13).fill(0));
+    b.geo.rivers = []; b.geo.lakes = [];
+    b.forts = [{ x: 8, y: 4, owner: 'def' }, { x: 10, y: 0, owner: 'def' }, { x: 10, y: 8, owner: 'def' }];
+    b.forts.forEach(f => { b.terrain[f.y][f.x] = 3; });
+    Object.assign(archer, { x: 6, y: 4 }); Object.assign(defender, { x: 8, y: 4 });
+    extras.forEach((e, i) => Object.assign(b.units[i + 1], { x: e.x, y: e.y, acted: true }));
+    b.busy = false; b.side = 'atk'; b.sel = archer;
+    return { b, archer, defender, home: { x: 8, y: 4 } };
+  }
+  function shoot(f, fire = false) {
+    pauseTimers = false;
+    Battle.act(fire ? 'fire' : 'atk'); Battle.clickCell(f.defender.x, f.defender.y);
+    pauseTimers = true;
+    check(f.b.round === 2 && f.b.side === 'atk', '수비 출격: 사격 후 수비 AI 턴 진행 실패');
+  }
+  for (const branch of ['보병', '기병']) for (const fire of [false, true]) {
+    const f = siegeFixture({ branch }), before = f.archer.troops;
+    shoot(f, fire);
+    check(distance(f.defender, f.home) > 0 && distance(f.defender, f.archer) === 1,
+      branch + '/' + fire + ': 고립 궁병을 향한 출격 누락');
+    check(f.archer.troops < before, branch + '/' + fire + ': 출격 후 같은 턴 반격 누락');
+    check(f.b.log.some(l => l.includes('궁병을 요격하러 출격')), '수비 출격: 판단 로그 누락');
+    check(f.b.forts[0].owner === 'def', '수비 출격: 빈 성의 수비 깃발이 사라짐');
+    // 궁병이 멀리 철수하면 무작정 추격하지 않고 방금 비운 성으로 돌아간다.
+    Object.assign(f.archer, { x: 0, y: 4 }); f.b.busy = false;
+    pauseTimers = false; Battle.act('nextTurn'); pauseTimers = true;
+    check(distance(f.defender, f.home) === 0, '수비 출격: 사격 위협 해소 후 성 복귀 실패');
+  }
+  {
+    const f = siegeFixture({ branch: '궁병' }), before = f.archer.troops;
+    shoot(f);
+    check(distance(f.defender, f.home) === 0 && f.archer.troops < before,
+      '성 위에서 사격할 수 있는 수비 궁병은 자리를 지키며 응전해야 함');
+  }
+  {
+    const f = siegeFixture({ extras: [{ branch: '기병', troops: 1000, x: 10, y: 4 }] });
+    shoot(f);
+    check(distance(f.defender, f.home) === 0, '다른 적이 빈 성을 점령할 수 있으면 출격하면 안 됨');
+  }
+  {
+    const f = siegeFixture({ troops: 8000,
+      extras: [{ branch: '궁병', troops: 30000, x: 5, y: 4 }, { branch: '궁병', troops: 30000, x: 6, y: 2 }] });
+    shoot(f);
+    check(distance(f.defender, f.home) === 0, '출격 위치의 적 전력이 압도적이면 수성해야 함');
+  }
+  {
+    const f = siegeFixture();
+    f.b.terrain.forEach(row => { row[7] = 4; });
+    shoot(f);
+    check(distance(f.defender, f.home) === 0, '물길 너머 궁병에게 불법 출격하면 안 됨');
+  }
+  {
+    const f = siegeFixture(); f.defender.morale = 30;
+    shoot(f);
+    check(distance(f.defender, f.home) === 0, '사기가 낮은 수비군은 출격을 삼가야 함');
+  }
+  Math.random = previousRandom; pauseTimers = false;
+}
+console.log('공성 수비군의 궁병 요격·위험 판단·성 복귀 검사 완료');
+
 console.log(errors === 0 ? '\n[OK] 전투 테스트 통과' : '\n[FAIL] 오류 ' + errors + '건');
 process.exit(errors === 0 ? 0 : 1);
