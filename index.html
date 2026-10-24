@@ -114,6 +114,8 @@ main{flex:1;display:flex;min-height:0}
   box-shadow:0 26px 70px #000d, 0 0 0 1px #e6c37c1a, inset 0 0 0 1px #ffffff0a;
 }
 #mapCanvas:active{cursor:grabbing}
+#mapMiniCanvas{position:absolute;top:10px;right:10px;z-index:3;width:144px;height:120px;border:1px solid var(--gold3);border-radius:8px;background:#0a110e;box-shadow:0 4px 14px #0009;cursor:crosshair;touch-action:manipulation}
+#mapFactionLegend{display:none}
 #attackIntro{position:fixed;inset:0;z-index:80;cursor:wait;display:flex;align-items:flex-end;justify-content:center;padding:24px;color:#f6eedb;font-weight:700;font-size:16px;text-shadow:0 2px 5px #000;background:linear-gradient(transparent 85%,#07100ce8);border-bottom:4px solid var(--attack-color)}
 #attackIntro[hidden]{display:none}
 #attackIntro.automated{pointer-events:none;cursor:default}
@@ -185,7 +187,6 @@ main{flex:1;display:flex;min-height:0}
 .income b{font-size:12px;font-weight:600;color:var(--ink2);font-variant-numeric:tabular-nums}
 .income b.g{color:var(--gold)}
 .income b.f{color:var(--good)}
-.income .ic:last-child{grid-column:1/-1}
 .command-preview{padding:10px 12px;border:1px solid var(--line2);border-radius:8px;background:#0f1712;line-height:1.8;font-variant-numeric:tabular-nums}
 .command-preview:empty{display:none}
 .sec{display:flex;align-items:center;justify-content:space-between;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid #ffffff0d}
@@ -571,6 +572,15 @@ input[type=checkbox]{accent-color:var(--gold2)}
   #app>main{overflow:hidden;min-height:0}
   #mapWrap{flex:1;min-height:0;padding:8px;overflow:hidden}
   #mapCanvas{width:auto;height:auto;max-width:100%;max-height:100%;border-radius:10px}
+  #mapMiniCanvas{top:4px;right:4px;width:96px;height:80px;border-radius:6px}
+  #mapFactionLegend{display:block;position:relative;z-index:1;flex:none;align-self:stretch;padding:7px 9px;border:1px solid var(--line2);border-radius:9px;background:#101a14}
+  #mapFactionLegend .legend-heading{display:flex;justify-content:space-between;gap:8px;margin-bottom:5px;font-size:10px;color:var(--muted)}
+  #mapFactionLegend .legend-heading b{color:var(--gold);font-weight:600}
+  #mapFactionLegend .faction-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px 10px}
+  #mapFactionLegend .faction-item{display:flex;align-items:center;gap:5px;min-width:0;font-size:11px;line-height:16px}
+  #mapFactionLegend .faction-item i{width:8px;height:8px;flex:none;border-radius:2px}
+  #mapFactionLegend .faction-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #mapFactionLegend .faction-item b{margin-left:auto;color:var(--gold);font-variant-numeric:tabular-nums;font-weight:500}
   #mapTools{gap:8px}
   #mapTools button{width:44px;height:44px}
   #side{display:none;flex:1;min-height:0;height:auto;overflow:hidden}
@@ -634,6 +644,8 @@ input[type=checkbox]{accent-color:var(--gold2)}
   .cmd-dock .cmds.c5{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
 @media (max-width:940px) and (max-height:500px) and (orientation:landscape){
+  #mapFactionLegend .faction-grid{grid-template-columns:repeat(7,minmax(0,1fr))}
+  #mapMiniCanvas{width:84px;height:70px}
   .battle-body{flex-direction:row}
   .battle-map{width:auto}
   .battle-side{width:300px;flex:0 0 300px;border-top:0;border-left:1px solid var(--line)}
@@ -679,8 +691,10 @@ input[type=checkbox]{accent-color:var(--gold2)}
     <div id="mapWrap">
       <div id="mapViewport">
         <canvas id="mapCanvas" width="1200" height="1000" aria-label="중원 지도"></canvas>
+        <canvas id="mapMiniCanvas" width="288" height="240" role="img" aria-label="전체 지도 미니맵 · 누르면 해당 위치로 이동" title="전체 지도 · 누르면 해당 위치로 이동"></canvas>
         <div id="mapHint" role="group" aria-label="지도 목적지 선택"></div>
       </div>
+      <div id="mapFactionLegend" role="region" aria-label="세력 일람"></div>
       <div class="map-footer">
       <div class="map-gesture-hint gesture-hint" title="두 손가락으로 확대·축소 · 드래그로 이동 · 도시를 눌러 명령">두 손가락으로 확대·축소 · 드래그로 이동 · 도시를 눌러 명령</div>
       <div id="mapTools" role="group" aria-label="지도 배율">

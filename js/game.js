@@ -632,6 +632,7 @@ function capOf(city) {
 /* 병력 충원 비용 (1명당 금) — 징병은 한 달에 한 도시 한 번, 모병은 횟수 제한 없이 두 배 비용 */
 const RECRUIT_COST = 0.08;
 const LEVY_COST = 0.16;
+const REWARD_COST = 100;
 const FOOD_BUY_RATE = 2; // 금 1로 군량 2 매입 (플레이어·AI 공통)
 const FOOD_SELL_RATE = 0.4; // 군량 1 매각 시 금 0.4 (매입가 대비 20% 낮음)
 const GARRISON_FOOD_DIVISOR = 90;
@@ -735,6 +736,16 @@ function factionTotals(fid) {
 function boot() {
   cvM = $('mapCanvas'); ctxM = cvM.getContext('2d');
   cvM.style.cursor = 'grab';
+  const mini = $('mapMiniCanvas');
+  if (mini) mini.addEventListener('pointerup', e => {
+    if (!G || G.battleActive || attackIntro || e.button !== 0) return;
+    const r = mini.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    stopZoomAnim();
+    view.px = MAP_WIDTH / 2 - (e.clientX - r.left) / r.width * MAP_WIDTH * view.scale;
+    view.py = MAP_HEIGHT / 2 - (e.clientY - r.top) / r.height * MAP_HEIGHT * view.scale;
+    viewClamp(); syncGoal(); hover = null; drawMap();
+  });
   if (typeof Sound !== 'undefined') Sound.boot();     // 설정 복원 + 첫 입력에서 오디오 활성화
   bindSfx();                                          // 버튼·목록 클릭 효과음
   bindPortraitTip();                                  // 무장 초상화 호버 툴팁
@@ -843,7 +854,8 @@ function cityAt(x, y) {
       if (label.visible !== false && box && screen.x>=box.x && screen.x<=box.x+box.w && screen.y>=box.y && screen.y<=box.y+box.h) return name;
     }
   }
-  const rr = 24*cssScale / (view.scale || 1);
+  const markerScale = cityMarkerScale();
+  const rr = Math.max(24*cssScale, markerScale > 1 ? 32*markerScale : 0) / (view.scale || 1);
   let best=null,dist=rr*rr;
   for (const n of Object.keys(G ? G.cities : {})) {
     const c = G.cities[n];
@@ -916,9 +928,9 @@ function renderTop() {
   const facDot = $('facDot');
   if (facDot) { facDot.style.background = f.color; facDot.style.display = ''; }
   if ($('facInfo')) $('facInfo').title = f.name + ' · 세력색 ' + f.color;
-  $('goldInfo').textContent = commas(f.gold);
-  $('foodInfo').textContent = commas(f.food);
   const economy = factionEconomy(G.pf);
+  $('goldInfo').textContent = commas(f.gold) + ' (' + signed(economy.goldNet) + ')';
+  $('foodInfo').textContent = commas(f.food) + ' (' + signed(economy.foodNet) + ')';
   $('goldInfo').title = '월 수입 ' + economy.goldIncome + ' · 군 급료 ' + economy.goldUpkeep + ' · 순수입 ' + economy.goldNet;
   $('foodInfo').title = '월 생산 ' + economy.foodIncome + ' · 소비 ' + economy.foodUpkeep + ' · 순증감 ' + economy.foodNet;
   $('cmdInfo').textContent = G.cmd + ' / ' + G.cmdMax;
@@ -1567,7 +1579,7 @@ function isCapital(c) {
    확대·축소는 목표값(viewGoal)을 향해 매 프레임 보간해 부드럽게 움직인다. */
 const view = { scale: 1, px: 0, py: 0 };
 const viewGoal = { scale: 1, px: 0, py: 0 };     // 휠·버튼 입력이 쌓이는 목표값
-const VIEW_MIN = 1, VIEW_MAX = 3;
+const VIEW_MIN = 1, VIEW_MAX = 4;
 const ZOOM_TAU = 90;                            // 수렴 시간(ms) — 작을수록 빠릿, 클수록 미끄럽다
 const ZOOM_EPS = 4e-4;                          // 배율 수렴 판정 폭 — 단계가 촘촘해도 튀지 않게
 let zoomRaf = 0, zoomPrev = 0, zooming = false;
@@ -1725,9 +1737,18 @@ function drawLinks(x, sc) {
   x.restore();
 }
 
+/* 모바일에서는 실제 화면 크기를 보정하고 확대에 따라 성과 병력 표시도 함께 키운다. */
+function isMobileMap() {
+  return typeof window !== 'undefined' && window.innerWidth > 0 && window.innerWidth <= 940;
+}
+function cityMarkerScale(sc = view.scale) {
+  const rect = cvM?.getBoundingClientRect();
+  return isMobileMap() && rect?.width > 0 ? Math.max(1, MAP_WIDTH / rect.width * (0.32 + 0.16 * (sc - 1))) : 1;
+}
+
 /* 규모별 성곽: 작은 토성 → 누각과 성벽 → 이중 성벽·쌍루. 병력은 아래에 표시한다. */
-function drawCityGlyph(x, c, size, col, sc) {
-  x.save(); x.translate(c.x,c.y); x.scale(1/sc,1/sc);
+function drawCityGlyph(x, c, size, col, scale) {
+  x.save(); x.translate(c.x,c.y); x.scale(scale,scale);
   const r=size.rank, w=9+r*3, north=BattleTerrain.profiles[c.name] && ['dry','loess','upland'].includes(BattleTerrain.profiles[c.name].theme);
   x.fillStyle='rgba(0,0,0,.38)'; x.beginPath();x.ellipse(2,7,w+5,5,0,0,Math.PI*2);x.fill();
   if(r===3) {
@@ -1754,11 +1775,11 @@ function drawCityGlyph(x, c, size, col, sc) {
 }
 
 let cityLabelCache = null;
-function cityLabelLayout(x, names, labelScale = 1) {
+function cityLabelLayout(x, names, labelScale = 1, markerScale = 1) {
   const destinations=destPick()?.cands || [];
-  const key=cvM.width+':'+cvM.height+':'+labelScale+':'+view.scale+':'+view.px+':'+view.py+':'+G.sel+':'+hover+':'+G.pf+':'+destinations.join(',')+':'+names.map(n=>n+':'+G.cities[n].x+':'+G.cities[n].y+':'+citySize(G.cities[n]).rank+':'+G.cities[n].owner).join('|');
+  const key=cvM.width+':'+cvM.height+':'+labelScale+':'+markerScale+':'+view.scale+':'+view.px+':'+view.py+':'+G.sel+':'+hover+':'+G.pf+':'+destinations.join(',')+':'+names.map(n=>n+':'+G.cities[n].x+':'+G.cities[n].y+':'+citySize(G.cities[n]).rank+':'+G.cities[n].owner).join('|');
   if(cityLabelCache && cityLabelCache.key===key) return cityLabelCache.labels;
-  const taken=names.map(n=>{const c=screenFromWorld(G.cities[n].x,G.cities[n].y),rank=citySize(G.cities[n]).rank,roof=rank===3?25:rank===2?18:14;return {name:n,x:c.x-23,y:c.y-roof,w:46,h:roof+10};}),labels={};
+  const taken=names.map(n=>{const c=screenFromWorld(G.cities[n].x,G.cities[n].y),rank=citySize(G.cities[n]).rank,roof=rank===3?25:rank===2?18:14;return {name:n,x:c.x-27*markerScale,y:c.y-roof*markerScale,w:54*markerScale,h:(roof+21)*markerScale};}),labels={};
   const s=v=>v*labelScale;
   x.font='bold '+s(14)+'px "Batang","바탕",Georgia,serif';
   const priority=n=>(n===G.sel?10000:0)+(n===hover?5000:0)+(destinations.includes(n)?1000:0)+(G.cities[n].owner===G.pf?100:0)+citySize(G.cities[n]).rank;
@@ -1767,23 +1788,25 @@ function cityLabelLayout(x, names, labelScale = 1) {
     const rank=citySize(G.cities[n]).rank;
     // PC에서는 성 지붕 바로 위에 고정한다. 축소 중 충돌 회피로 이름표가 멀어지지 않는다.
     if (labelScale <= 1.4) {
-      const dx=-width/2,dy=-(rank===3?31:rank===2?24:20);
-      labels[n]={dx,dy,width,box:{x:c.x+dx-6,y:c.y+dy-14,w:width+12,h:20}};
+      const dx=-width/2,dy=-(rank===3?25:rank===2?18:14)*markerScale-s(6);
+      labels[n]={dx,dy,width,box:{x:c.x+dx-s(6),y:c.y+dy-s(14),w:width+s(12),h:s(20)}};
       return;
     }
     // 이름표의 가장자리를 성에 붙인다. 밀집 지역도 외곽의 빈 공간까지 밀어내지 않는다.
     const roof=rank===3?25:rank===2?18:14;
-    const above=-roof-2-s(5.5),below=12+s(13.5),side=24+s(5.5);
+    const above=-roof*markerScale-2-s(5.5),below=21*markerScale+s(13.5),side=27*markerScale+s(5.5);
     const candidates=[[-width/2,above],[-width/2,below],[side,s(4)],[-width-side,s(4)],
       [-width/2-s(5),above],[-width/2+s(5),above]];
     let best=candidates[0],bestOverlap=Infinity,bestCollision=Infinity;
-    candidates.forEach(([dx,dy])=>{
+    for (const [dx,dy] of candidates) {
       const r={x:c.x+dx-s(6),y:c.y+dy-s(14),w:width+s(12),h:s(20)};
       const outside=Math.max(0,-r.x)+Math.max(0,r.x+r.w-MAP_WIDTH)+Math.max(0,-r.y)+Math.max(0,r.y+r.h-MAP_HEIGHT);
       const collision=outside*s(100)+taken.reduce((sum,o)=>o.name===n?sum:sum+Math.max(0,Math.min(r.x+r.w,o.x+o.w)-Math.max(r.x,o.x))*Math.max(0,Math.min(r.y+r.h,o.y+o.h)-Math.max(r.y,o.y)),0);
       const overlap=collision+Math.hypot(dx+width/2,dy-s(4))*.01;
       if(overlap<bestOverlap){bestOverlap=overlap;bestCollision=collision;best=[dx,dy];}
-    });
+      // 위쪽부터 검사하여 겹침이 없는 첫 위치를 사용한다.
+      if (collision < .1) { best=[dx,dy]; bestCollision=collision; break; }
+    }
     const box={x:c.x+best[0]-s(6),y:c.y+best[1]-s(14),w:width+s(12),h:s(20)};
     const visible=bestCollision<.1 || n===G.sel || n===hover;
     labels[n]={dx:best[0],dy:best[1],width,box,visible};
@@ -1792,25 +1815,26 @@ function cityLabelLayout(x, names, labelScale = 1) {
   cityLabelCache={key,labels};return labels;
 }
 
-/* 표식과 글자를 화면 좌표에서 고정 폰트로 그린다. 확대 중 글꼴 힌팅·배치가 바뀌지 않는다. */
+/* 이름표는 읽기 쉬운 화면 크기를 유지하고 성 표식은 모바일 배율을 반영한다. */
 function drawCities(x, sc) {
   const W = MAP_WIDTH, H = MAP_HEIGHT;
   const SERIF = '"Batang","바탕",Georgia,serif';
   const SANS = '"Malgun Gothic","맑은 고딕",sans-serif';
-  const s = v => v;
+  const markerScale = cityMarkerScale(sc);
+  const s = v => v * markerScale;
   const rect = cvM.getBoundingClientRect();
-  const mobile = typeof window !== 'undefined' && window.innerWidth > 0 && window.innerWidth <= 940;
+  const mobile = isMobileMap();
   const labelScale = mobile && rect.width > 0 ? Math.max(1, 13 / 14 * W / rect.width) : 1;
   const ls = v => v * labelScale;
   const names = Object.keys(G.cities);
   x.save();x.setTransform(cvM.width/W,0,0,cvM.height/H,0,0);
-  const labels=cityLabelLayout(x,names,labelScale);
+  const labels=cityLabelLayout(x,names,labelScale,markerScale);
   const dp = destPick();                               // 지도에서 고르는 목적지 후보 (이동: 금색 / 출진: 붉은 점선)
   const destCands = dp ? dp.cands : [];
   const destAtk = !!(dp && dp.kind === 'attack');
   const onScreen = c => {
     const p = screenFromWorld(c.x, c.y);
-    return p.x > -90 && p.x < W + 90 && p.y > -70 && p.y < H + 70;
+    return p.x > -s(90) && p.x < W + s(90) && p.y > -s(70) && p.y < H + s(70);
   };
   names.slice().sort((a,b)=>Number(a===G.sel)-Number(b===G.sel)).forEach(n => {
     const city=G.cities[n];
@@ -1848,7 +1872,7 @@ function drawCities(x, sc) {
       x.fillStyle = destAtk ? 'rgba(255,186,168,.98)' : 'rgba(255,232,168,.95)'; x.fill();
       x.strokeStyle = 'rgba(6,11,8,.75)'; x.lineWidth = s(1); x.stroke();
     }
-    drawCityGlyph(x, c, size, col, 1);
+    drawCityGlyph(x, c, size, col, markerScale);
     x.fillStyle = '#fff'; x.font = 'bold ' + s(10.5) + 'px ' + SANS;
     x.textAlign = 'center'; x.textBaseline = 'middle';
     x.shadowColor = 'rgba(0,0,0,.8)'; x.shadowBlur = s(2); x.shadowOffsetY = s(0.6);
@@ -1964,6 +1988,7 @@ function drawChrome(x, W, H, SERIF, SANS) {
   x.restore();
 
   /* 범례 */
+  if (!isMobileMap()) {
   const fs = Object.keys(G.factions).filter(fid => factionCities(fid).length)
     .sort((a, b) => factionCities(b).length - factionCities(a).length);
   const cols = fs.length > 8 ? 2 : 1;
@@ -2007,6 +2032,7 @@ function drawChrome(x, W, H, SERIF, SANS) {
   x.fillStyle = 'rgba(224,232,218,.82)';
   x.fillText('아군', lx + 118, ly);
   x.restore();
+  }
 
   /* 축척 : 확대 배율을 반영해 구간을 자동 선택 */
   const pxPerKm = (MAP_VIEW.kx / 96.4) * view.scale;
@@ -2164,6 +2190,41 @@ function drawIntroArrow(x,a,b,color,progress,arrivalRing) {
   x.restore();
 }
 
+function renderMapFactionLegend() {
+  const el = $('mapFactionLegend');
+  if (!el || !isMobileMap()) return;
+  const factions = Object.keys(G.factions).map(fid => ({f:G.factions[fid],count:factionCities(fid).length}))
+    .filter(entry => entry.count).sort((a,b) => b.count-a.count);
+  const html = '<div class="legend-heading"><b>세력 일람</b><span>보유 도시 수</span></div><div class="faction-grid">' +
+    factions.map(({f,count}) => '<div class="faction-item"><i style="background:' + f.color + '"></i><span>' + f.name + '</span><b>' + count + '</b></div>').join('') + '</div>';
+  if (el.innerHTML !== html) el.innerHTML = html;
+}
+
+function drawMinimap() {
+  const mini = $('mapMiniCanvas');
+  if (!mini || !terrainBaseLayer) return;
+  const rect = mini.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(1,Math.round(rect.width*ratio)),height = Math.max(1,Math.round(rect.height*ratio));
+  if (mini.width !== width) mini.width = width;
+  if (mini.height !== height) mini.height = height;
+  const x = mini.getContext('2d'),sx = width/MAP_WIDTH,sy = height/MAP_HEIGHT;
+  x.setTransform(1,0,0,1,0,0); x.clearRect(0,0,width,height);
+  x.drawImage(terrainBaseLayer,0,0,width,height);
+  x.setTransform(sx,0,0,sy,0,0);
+  Object.values(G.cities).forEach(c => {
+    x.beginPath(); x.arc(c.x,c.y,(c.name === G.sel ? 2.5 : 1.6)*ratio/sx,0,Math.PI*2);
+    x.fillStyle = G.factions[c.owner]?.color || '#8b9a8e'; x.fill();
+  });
+  const left = -view.px/view.scale,top = -view.py/view.scale,w = MAP_WIDTH/view.scale,h = MAP_HEIGHT/view.scale;
+  x.fillStyle = 'rgba(255,235,168,.12)'; x.fillRect(left,top,w,h);
+  x.strokeStyle = '#fff0b0'; x.lineWidth = 1.5*ratio/sx;
+  const inset = x.lineWidth/2;
+  x.strokeRect(left+inset,top+inset,Math.max(0,w-2*inset),Math.max(0,h-2*inset));
+  x.setTransform(1,0,0,1,0,0);
+}
+
 function fitMapResolution() {
   const host=cvM.parentElement;
   if (!host || !host.clientWidth || !host.clientHeight) return;
@@ -2178,6 +2239,7 @@ function fitMapResolution() {
 
 function drawMap() {
   if (!ctxM || !G) return;
+  renderMapFactionLegend();
   fitMapResolution();
   const x = ctxM, W = MAP_WIDTH, H = MAP_HEIGHT;
   const sx=cvM.width/W,sy=cvM.height/H;
@@ -2229,6 +2291,7 @@ function drawMap() {
   x.fillRect(0, 0, W, H);
   overlayGrain(x, W, H, .07, 'overlay');
   drawChrome(x, W, H, SERIF, SANS);
+  drawMinimap();
   drawAttackIntro(x);
 
   const zl = $('zoomLabel');
@@ -2368,7 +2431,6 @@ function renderCityPanel() {
   colA += '<p class="muted">'+cityRegion(c).label+'</p><div class="income">' +
     '<div class="ic"><span class="k">도시 월 수입</span><b class="g">금 +' + commas(cityGoldIncome(c)) + '</b><b class="f">군량 +' + commas(cityFoodIncome(c)) + '</b></div>' +
     '<div class="ic"><span class="k">도시 주둔 소비</span><b class="g">금 -' + commas(cityGoldUpkeep(c)) + '</b><b class="f">군량 -' + commas(cityFoodUpkeep(c)) + '</b></div>' +
-    '<div class="ic"><span class="k">월 순증감 · 세력 전체 · 평시</span><b>금 ' + signed(economy.goldNet) + ' · 군량 ' + signed(economy.foodNet) + '</b></div>' +
   '</div>';
   if (mine && economy.foodNet < 0) {
     const reserve = Math.floor(f.food/-economy.foodNet);
@@ -2415,7 +2477,7 @@ function renderCityPanel() {
     move: '인접 아군 도시로 무장·병력을 옮깁니다 (명령 1)',
     attack: '인접 적 도시로 출진합니다 — 지도에서 목적지를 고릅니다 (명령 1)',
     hire: '재야·포로 무장을 설득합니다 (명령 1)',
-    reward: '금 300으로 충성도를 올립니다 (명령 1)'
+    reward: '금 ' + REWARD_COST + '으로 충성도를 올립니다 (명령 1)'
   };
   let dock = '';
   if (mine) {
@@ -4196,18 +4258,18 @@ function cmdReward(cityName) {
   const rows = list.map(o => '<div class="row" role="button" tabindex="0" onclick="Game.doReward(\'' + o.name + '\')">' +
     '<span class="name">' + portraitHtml(o.name, 22) + o.name + '</span>' +
     '<span class="stats">충성도 ' + o.loyalty + (o.skill ? ' · ' + o.skill : '') + '</span>' +
-    '<span class="right">금 300</span></div>').join('');
+    '<span class="right">금 ' + REWARD_COST + '</span></div>').join('');
   showModal('<h3>포상 — ' + cityName + '</h3>' +
-    '<p class="muted">보유 금 ' + commas(f.gold) + ' · 1회 300금, 충성도 +10~15 (충성도가 낮으면 배신 위험) · 포상은 무장 행동을 소모하지 않습니다.</p>' +
+    '<p class="muted">보유 금 ' + commas(f.gold) + ' · 1회 ' + REWARD_COST + '금, 충성도 +10~15 (충성도가 낮으면 배신 위험) · 포상은 무장 행동을 소모하지 않습니다.</p>' +
     rows + '<div class="foot"><button onclick="Game.closeModal()">닫기</button></div>');
 }
 function doReward(name) {
   const f = G.factions[G.pf];
   const o = off(name); if (!o) return;
-  if (f.gold < 300) { toast('금이 부족합니다'); return; }
+  if (f.gold < REWARD_COST) { toast('금이 부족합니다'); return; }
   if (o.loyalty >= 100) { toast(o.name + '의 충성도는 이미 최대입니다'); return; }
   if (!spendCmd()) return;
-  f.gold -= 300;
+  f.gold -= REWARD_COST;
   o.loyalty = cl(o.loyalty + ri(10, 15), 0, 100);
   log(o.name + '에게 포상 (충성도 → ' + o.loyalty + ')', 'good');
   closeModal(); renderAll();
@@ -4637,7 +4699,7 @@ function aiActionCandidates(fid,ledger={}) {
       add({t:'hr',cn,name:candidate.name,score:officersIn(cn).length<2?120:35});
     }
     const low=officersIn(cn).filter(o=>!isLeader(o.name)&&o.loyalty<55).sort((a,b)=>a.loyalty-b.loyalty)[0];
-    if(low&&budget>=300)add({t:'reward',cn,name:low.name,score:low.loyalty<40?150:40});
+    if(low&&budget>=REWARD_COST)add({t:'reward',cn,name:low.name,score:low.loyalty<40?150:40});
     if(c.order>=65&&!foodStress&&economy.goldNet>=cities.length*65) {
       if(c.agri<90)develop('agri',35+(90-c.agri)*.2);
       if(c.comm<90)develop('comm',35+(90-c.comm)*.2);
@@ -4710,8 +4772,8 @@ function execAIAct(fid, a, cb) {
   const c = G.cities[a.cn];
   if (a.t === 'reward') {
     const o = off(a.name);
-    if (o && o.faction === fid && o.loyalty < 100 && f.gold >= 300) {
-      spend();f.gold -= 300;
+    if (o && o.faction === fid && o.loyalty < 100 && f.gold >= REWARD_COST) {
+      spend();f.gold -= REWARD_COST;
       o.loyalty = cl(o.loyalty + ri(8, 15), 0, 100);
     }
     cb(); return;
@@ -5153,11 +5215,11 @@ function openHelp() {
     '<p><b>턴 진행</b> : 한 달에 명령권 = 보유 도시 수 + 2. 명령을 쓰고 [턴 종료]를 누르면 AI 세력이 움직이고 월간 수입·이벤트가 처리됩니다. <b>첫 2개월은 AI가 공격해 오지 않습니다.</b></p>' +
     '<p><b>무장 행동</b> : 각 무장은 한 달에 한 번만 명령에 참여할 수 있습니다(내정·군사·등용). 이미 참여한 무장은 도시 패널에서 흐리게 표시되며, 다음 달에 다시 활동할 수 있습니다. 포상·외교는 무장 행동을 소모하지 않습니다.</p>' +
     '<p><b>내정</b> : 개발(농업→군량) · 상업(→금) · 치안(금·군량 생산/징병 효율) · 수복(방어도). <b>방어도 0~50의 보정은 기존대로 유지하고, 50 초과부터 추가로 강화됩니다. 방어력 보정은 50에서 +12.5%, 100에서 +38%입니다.</b> 1/2/3명 배치에 금 60/95/130과 명령 1이 들고, 추가 무장의 효과는 65%/40%로 줄어듭니다. 정치·지력과 명재 특기가 효과를 높입니다. 선택 화면에 정확한 비용·효과·월 생산 증가를 표시하며, 최대치 근처에서는 실제 상승분만큼 비용도 줄어듭니다.</p>' +
-    '<p><b>재정·보급</b> : 매달 병력 500명당 금 1, 평시 90명당 군량 1을 소비합니다(도시별 올림). 인구 상한 초과 병력의 군량은 2배입니다. 치안은 금·군량 생산 모두에 영향을 줍니다. 도시 패널에서 모든 보유 도시를 합산한 월 순증감·군량 지속 기간을 확인하세요. [군량 매입]은 금 100/300/600으로 군량 200/600/1,200을 얻습니다. [군량 매각]은 군량 200/600/1,200을 금 80/240/480에 팝니다(매입가 대비 20% 낮음). 매입·매각 모두 명령 1을 쓰며 무장은 필요 없습니다. 군량 부족 시 미지급 비율에 따라 병력·사기가 감소하고, 급료 부족 시 사기가 감소합니다. 전투에서는 참가 병력과 행군 중인 원군 600명당 매 라운드 군량 1을 추가 소비합니다. 보급이 부족하면 해당 진영의 사기가 라운드당 최대 8 내려갑니다. 편성 화면에서 예상 소모를, 전장에서 누적 소모·잔여 군량을 확인하세요. 새 게임은 평시 주둔군 6개월분(최소 600)을 비축합니다.</p>' +
+    '<p><b>재정·보급</b> : 매달 병력 500명당 금 1, 평시 90명당 군량 1을 소비합니다(도시별 올림). 인구 상한 초과 병력의 군량은 2배입니다. 치안은 금·군량 생산 모두에 영향을 줍니다. 상단바의 금·군량 괄호에서 세력 전체의 월 순증감을, 도시 패널에서 군량 지속 기간을 확인하세요. [군량 매입]은 금 100/300/600으로 군량 200/600/1,200을 얻습니다. [군량 매각]은 군량 200/600/1,200을 금 80/240/480에 팝니다(매입가 대비 20% 낮음). 매입·매각 모두 명령 1을 쓰며 무장은 필요 없습니다. 군량 부족 시 미지급 비율에 따라 병력·사기가 감소하고, 급료 부족 시 사기가 감소합니다. 전투에서는 참가 병력과 행군 중인 원군 600명당 매 라운드 군량 1을 추가 소비합니다. 보급이 부족하면 해당 진영의 사기가 라운드당 최대 8 내려갑니다. 편성 화면에서 예상 소모를, 전장에서 누적 소모·잔여 군량을 확인하세요. 새 게임은 평시 주둔군 6개월분(최소 600)을 비축합니다.</p>' +
     '<p><b>군사</b> : 징병(1,000명당 금 80·치안 -5·신병 훈련 30/사기 55, <b>도시당 월 1회</b>) · 모병(1,000명당 금 160·치안 -1·신병 훈련 55/사기 75, 같은 달에 반복 가능). 충원·이동 시 기존 병력과 훈련·사기를 인원 비율로 합산합니다. 훈련(훈련도·사기↑) · 이동(아군 도시로, <b>무장 인원 제한 없음</b>, 출발 도시 병력 전부 이동 가능 — 목적지 인구 상한을 넘겨도 주둔 가능. 무장을 고르면 <b>목적지 후보 도시가 지도에 금색 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>. 지도 아래 띠의 [목록에서 선택]으로 목록 선택도 가능) · 출진(적 도시 공격 — 무장을 고르면 <b>목적지 후보 적 도시가 지도에 붉은 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>(지도 아래 띠의 [목록에서 선택]도 가능). 인접 아군 도시와 <b>합동 출진</b> → 전술 전투. 합류 도시 부대는 원군처럼 늦게 도착하고, 전투가 끝나면 무장·잔존 병력이 각자 출발 도시로 복귀).</p>' +
     '<p><b>전투</b> : 부대별로 이동/공격/계략(화계·혼란·고무)/일기토/진형을 사용합니다. <b>이동한 뒤에도 같은 턴에 공격할 수 있습니다.</b> 병과 상성(기병→궁병→보병→기병), 진형, 지형(숲·산·성)을 활용하세요. <b>기병은 [돌격]</b>으로 최대 3칸까지 적 부대를 뚫고 반대편으로 빠져나올 수 있지만 <b>출발점·경로·착지점이 모두 평지여야 하며 숲·산·성·물·여울에서는 돌격할 수 없습니다.</b>  <b>보병은 2부대 이상이 모이면 [일제공격]</b>으로 같은 적을 동시에 공격합니다(반격 없음). <b>궁병은 [불화살]</b>로 적을 불태워 2라운드간 화상 피해를 남길 수 있고(부대당 2회, 숲에서 1.5배), <b>궁병이 아닌 부대가 근접 공격하면 상대의 반격</b>으로 아군도 피해를 입습니다. <b>성에서 공격하면 받는 반격 피해가 지형 방어에 더해 25% 줄어듭니다.</b> 전투 중에는 인접 아군 도시에서 <b>원군</b>을 보낼 수 있고, 원군은 행군에 며칠이 걸려 도착합니다(진군 상황은 전장 위쪽 상태바에 표시). <b>적도 병력이 불리해지면 원군을 보내므로</b> 상태바의 적 원군 표시를 확인하세요. <b>수비 편성 중 미리 요청한 원군은 플레이어·AI 모두 2라운드 뒤 도착</b>합니다. 적이 우리 성을 공격하면 전투 전에 <b>수비 편성</b> 창이 열려 출진처럼 무장·병과·진형·병력을 직접 지정할 수 있습니다(창을 닫으면 자동 편성). <b>AI도 매 라운드 상황에 맞춰 진형을 바꿉니다</b>(성 수비=방원, 궁병=학익, 기병=봉시, 보병=거리별 방원·안행·어린). 진형 전환은 <b>부대마다 첫 1회가 행동을 소모하지 않습니다</b>(이후 전환은 행동 소모, AI도 동일). 전투는 최대 <b>15라운드</b>입니다. <b>최대 라운드가 끝나면 공격군이 자동으로 후퇴하고 방어군이 승리합니다.</b> 공성전에서 <b>세 성의 깃발이 모두 공격군으로 바뀌면 방어측 패배</b>입니다. <b>수비측은 후퇴할 인접 아군 도시가 있으면 [후퇴]</b>로 성을 내주고 잔존 병력의 80%를 이끌고 빠져나갈 수 있습니다(무장도 함께 이동). <b>수비 편성 창에서도 [후퇴]</b>를 눌러 싸우지 않고 성을 내주고 빠져나갈 수 있습니다(편성 중 요청한 원군은 취소되어 출발 도시로 돌아갑니다). <b>[다음 턴]</b> 버튼으로 남은 부대를 대기시키고 턴을 넘길 수 있습니다.</p>' +
     '<p><b>병력과 회복</b> : 현재 병력이 많을수록 공격·반격이 강해지며, 3,000명을 넘는 대부대는 증가폭이 완만해집니다. 1,000명 미만 부대는 사기·화상 효과와 적 계략 성공률이 낮고, 화계 피해도 병력에 비례해 줄어듭니다. 일기토 신청은 부대당 전투 중 1회입니다. 고무는 반드시 성공하며, 훈련도가 100이어도 [훈련]으로 사기를 회복할 수 있습니다.</p>' +
-    '<p><b>인사</b> : 등용(재야·포로 설득) · 포상(금 300, 충성도↑). 충성도가 45 미만이면 배신할 수 있습니다. 세력 수장(★)은 충성 100으로 배신·포로가 없습니다.</p>' +
+    '<p><b>인사</b> : 등용(재야·포로 설득) · 포상(금 100, 충성도↑). 충성도가 45 미만이면 배신할 수 있습니다. 세력 수장(★)은 충성 100으로 배신·포로가 없습니다.</p>' +
     '<p><b>시기별 등장</b> : 194년 이후 인물(제갈량·사마의·강유 등)은 <b>역사적 등장 시기</b>에 맞춰 해당 지역에 나타납니다. 등장한 달에는 전황 기록에 알림이 뜨고, 그 도시를 지배하는 세력이 있으면 곧바로 합류하며, 아니면 재야로 남아 [등용]으로 설득할 수 있습니다. 아직 등장하지 않은 인물은 무장 일람에 표시되지 않습니다.</p>' +
     '<p><b>포로</b> : 전투에서 사로잡은 무장은 해당 도시에 머물며, 그 도시를 원래 세력이 되찾으면 자동으로 풀려납니다.</p>' +
     '<p><b>외교</b> : 동맹은 12개월, 휴전은 6개월입니다. 공동 출진은 동맹국에 3개월 동안 특정 도시 공격을 우선 검토하도록 요청합니다. 상대가 3도시 이하이고 병력·도시가 각각 4배 우세하면 항복 권고가 가능하며 종속 세력의 영토를 편입할 수 있습니다. AI도 공동의 적과 보급 사정에 따라 동맹·휴전을 선택합니다. 선물로 관계를 올리고 동맹을 맺으면 서로 공격하지 않습니다. 동맹국 도시는 별도로 표시되며, 수비 편성·전투 중 원군 목록에서 전장에 인접한 동맹국 도시에 원군을 요청할 수 있습니다(도시별 전투당 1회). 동맹국이 주둔 병력·미행동 무장·훈련·사기·군량·주변 위협·관계를 보고 승낙 여부와 파견 규모를 정하며, 교전 상대와도 동맹이면 참전하지 않습니다. 지원 부대는 전투 후 출발 도시로 복귀합니다(패전·포로 손실 적용).</p>' +
