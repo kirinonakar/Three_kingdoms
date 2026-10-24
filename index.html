@@ -436,6 +436,12 @@ input[type=checkbox]{accent-color:var(--gold2)}
 }
 .battle-viewport{position:relative;flex:1 1 0;min-height:0;width:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .battle-map>.battle-viewport{flex-shrink:1}
+.battle-minimap{position:absolute;top:8px;right:8px;z-index:4;width:148px;padding:4px;border:1px solid var(--gold3);border-radius:8px;background:#0b1510ed;box-shadow:0 4px 14px #0009}
+#bMiniCanvas{display:block;width:100%;aspect-ratio:13/9;border-radius:4px;cursor:crosshair;touch-action:manipulation}
+.battle-minimap-legend{display:flex;align-items:center;justify-content:space-between;gap:4px;padding-top:3px;font-size:10px;line-height:14px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.battle-minimap-legend b{font-weight:500}
+.battle-minimap-legend .friendly{color:#6ab9ff}
+.battle-minimap-legend .hostile{color:#ff7a68}
 .battle-zoom{position:relative;z-index:2;align-self:flex-end;display:flex;align-items:center;gap:6px;padding:4px;background:#0b1510e8;border:1px solid var(--line2);border-radius:10px}
 .battle-zoom button{width:34px;height:34px;padding:0;font-size:17px}
 .battle-zoom span{font-size:11px;min-width:40px;color:var(--gold);font-variant-numeric:tabular-nums}
@@ -621,6 +627,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
   .battle-head{height:52px;flex-basis:52px;padding:4px 8px}
   .bh-sound button{width:44px;height:44px}
   .battle-map{flex:1 1 0;min-height:0;padding:6px;gap:4px;overflow:hidden}
+  .battle-minimap{top:4px;right:4px;width:104px;padding:3px;border-radius:6px}
   .battle-geography{gap:6px;padding:0 4px}
   .battle-geography b{font-size:12px;letter-spacing:0}
   .battle-geography span{display:none}

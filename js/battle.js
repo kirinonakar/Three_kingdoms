@@ -226,7 +226,9 @@ const Battle = (function () {
         '<div class="battle-body">' +
           '<div class="battle-map">' +
             '<div class="battle-geography"><div><b>' + B.geo.region + ' · '+B.geo.site+'</b><span>' + (B.opts.siege?B.geo.detail:B.geo.tactics) + '</span></div><span class="north">↑ 북</span></div>' +
-            '<div class="battle-viewport" id="bViewport"><canvas id="battleCanvas" aria-label="' + B.opts.city.name + ' 전술 전장" width="' + (COLS * TILE) + '" height="' + (ROWS * TILE) + '"></canvas></div>' +
+            '<div class="battle-viewport" id="bViewport"><canvas id="battleCanvas" aria-label="' + B.opts.city.name + ' 전술 전장" width="' + (COLS * TILE) + '" height="' + (ROWS * TILE) + '"></canvas>' +
+              '<div class="battle-minimap" role="group" aria-label="전장 미니맵"><canvas id="bMiniCanvas" width="296" height="205" role="img" aria-label="전장 전체 지도 · 파란 원은 아군, 붉은 마름모는 적군" title="전체 전장 · 누르면 해당 위치로 이동"></canvas>' +
+                '<div class="battle-minimap-legend"><span class="friendly">● 아군 <b id="bMiniFriendly">0</b></span><span class="hostile">◆ 적군 <b id="bMiniHostile">0</b></span></div></div></div>' +
             '<div class="terrain-legend"><span><i class="land"></i>평지</span><span><i class="forest"></i>숲 +15%</span><span><i class="mountain"></i>산 +25%</span>' + (B.opts.siege?'<span><i class="fort"></i>성 +40%</span>':'') + '<span><i class="water"></i>물 · 진입 불가</span><span><i class="ford"></i>여울 · 방어 -15% · 이동 2~3</span></div>' +
             '<div class="map-hint" id="bTerrainInfo"></div>' +
             '<details class="text-board battle-directory" id="bDirectory"><summary>전장 목록 · 좌표로 조작</summary><div id="bTextBoard"></div></details>' +
@@ -252,6 +254,16 @@ const Battle = (function () {
       '</div></div>';
     cv = $('battleCanvas');
     ctx = cv.getContext('2d');
+    const mini = $('bMiniCanvas');
+    if (mini) mini.addEventListener('pointerup', e => {
+      if (!B || e.button !== 0) return;
+      const r = mini.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      setCamera({
+        px: COLS*TILE/2 - (e.clientX-r.left)/r.width*COLS*TILE*camera.scale,
+        py: ROWS*TILE/2 - (e.clientY-r.top)/r.height*ROWS*TILE*camera.scale
+      });
+    });
     navigation = bindCanvasNavigation(cv, {
       size: () => ({ width: COLS * TILE, height: ROWS * TILE, maxScale: 4 }),
       read: () => camera, write: setCamera,
@@ -2092,6 +2104,53 @@ const Battle = (function () {
     return best;
   }
 
+  function drawMinimap() {
+    const mini = $('bMiniCanvas');
+    if (!mini || !B.backdropBase) return;
+    const r = mini.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const ratio = Math.min((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 2);
+    const width = Math.max(1,Math.round(r.width*ratio)),height = Math.max(1,Math.round(r.height*ratio));
+    if (mini.width !== width) mini.width = width;
+    if (mini.height !== height) mini.height = height;
+    const x = mini.getContext('2d');
+    // CSS 크기를 기준으로 그려 작은 화면에서도 표식과 테두리가 같은 크기로 보인다.
+    x.setTransform(ratio,0,0,ratio,0,0);
+    x.clearRect(0,0,r.width,r.height);
+    x.drawImage(B.backdropBase,0,0,r.width,r.height);
+    const W = COLS*TILE,H = ROWS*TILE;
+    const sx = r.width/COLS,sy = r.height/ROWS;
+    const friend = B.playerSide === 'def' ? 'def' : 'atk';
+    const color = side => side === friend ? '#6ab9ff' : '#ff7a68';
+    fortTiles().forEach(f => {
+      x.fillStyle = color(f.owner);x.strokeStyle = '#172219';x.lineWidth = 1;
+      x.fillRect((f.x+.5)*sx-3,(f.y+.5)*sy-3,6,6);
+      x.strokeRect((f.x+.5)*sx-3,(f.y+.5)*sy-3,6,6);
+    });
+    const left = -camera.px/camera.scale/W*r.width,top = -camera.py/camera.scale/H*r.height;
+    const w = r.width/camera.scale,h = r.height/camera.scale;
+    x.fillStyle = 'rgba(255,235,168,.10)';x.fillRect(left,top,w,h);
+    x.strokeStyle = '#fff0b0';x.lineWidth = 1.2;
+    x.strokeRect(left+.6,top+.6,Math.max(0,w-1.2),Math.max(0,h-1.2));
+    const units = B.units.filter(u => u.alive && u.troops > 0);
+    // 선택 부대를 맨 위에 그린다. 행군 중에는 본 전장과 같은 보간 좌표를 사용한다.
+    units.slice().sort((a,b) => Number(a === B.sel)-Number(b === B.sel)).forEach(u => {
+      const p = animPos(u) || u,cx = (p.x+.5)*sx,cy = (p.y+.5)*sy;
+      const mine = u.side === friend,size = u === B.sel ? 3.5 : 2.8;
+      if (u === B.sel) {
+        x.beginPath();x.arc(cx,cy,size+2,0,Math.PI*2);
+        x.strokeStyle = '#ffe6a8';x.lineWidth = 1.5;x.stroke();
+      }
+      x.beginPath();
+      if (mine) x.arc(cx,cy,size,0,Math.PI*2);
+      else {x.moveTo(cx,cy-size-1);x.lineTo(cx+size+1,cy);x.lineTo(cx,cy+size+1);x.lineTo(cx-size-1,cy);x.closePath();}
+      x.fillStyle = color(u.side);x.fill();x.strokeStyle = '#0a1514';x.lineWidth = 1;x.stroke();
+    });
+    const friendly = $('bMiniFriendly'),hostile = $('bMiniHostile');
+    if (friendly) friendly.textContent = String(units.filter(u => u.side === friend).length);
+    if (hostile) hostile.textContent = String(units.filter(u => u.side !== friend).length);
+  }
+
   function draw() {
     if (!B || !ctx) return;
     const W = COLS * TILE, H = ROWS * TILE;
@@ -2146,6 +2205,7 @@ const Battle = (function () {
         ctx.fillRect(0, 0, W, H);
       }
     }
+    drawMinimap();
   }
 
   /* 연속된 지면 — 타일마다 명암을 초기화하지 않고 지형과 경작지로 표면을 나눈다. */
