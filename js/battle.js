@@ -2924,7 +2924,9 @@ const Battle = (function () {
         if (canPoint && u.branch === '궁병' && fireTargets(u).length) clicks.push('[불화살] ' + fireLeft(u) + '발 남음');
         const hp = Math.max(0, Math.min(1, u.troops / u.max));
         const hpCol = hp > .5 ? '#7fc08d' : (hp > .25 ? '#e3b75f' : '#ef8b78');
+        const face = portraitFace(u.name);
         el.innerHTML =
+          '<div class="b-unit-summary"><div class="b-unit-info">' +
           '<div class="bn">' + u.name + ' 부대</div>' +
           '<div class="badges"><span class="badge2">' + u.branch + '</span><span class="badge2">' + u.form + '</span>' +
             (u.acted ? '<span class="badge2">행동 완료</span>' : '') +
@@ -2937,6 +2939,7 @@ const Battle = (function () {
           '<div class="kv"><span>병력</span><b>' + commas(u.troops) + ' / ' + commas(u.max) + '</b>' +
             '<span>사기·훈련</span><b>' + u.morale + ' · ' + u.training + '</b>' +
             '<span>무력·지력</span><b>' + u.officer.wu + ' · ' + u.officer.zhi + '</b></div>' +
+          '</div>' + (face ? '<div class="b-unit-portrait">' + face + '</div>' : '') + '</div>' +
           '<div class="meter"><i style="width:' + Math.round(hp * 100) + '%;background:' + hpCol + '"></i></div>' +
           '<div class="meter"><i style="width:' + u.morale + '%;background:#6aa8e0"></i></div>' +
           '<div class="muted" style="font-size:10.5px">' + BRANCHES[u.branch].desc + ' · ' + (FORMS[u.form] || {}).desc + '</div>' +
