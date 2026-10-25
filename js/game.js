@@ -427,6 +427,7 @@ const PF_TIP_SEL = '[data-portrait]';
 const PF_CARD_SEL = '.otag, .row, tr, .ut-who, .ut-head, .frow, .ub';
 function portraitHost(target) {
   if (!target || !target.closest) return null;
+  if (target.closest('input,select,textarea,.troop-stepper')) return null;
   const own = target.closest(PF_TIP_SEL);
   if (own) return own;
   const card = target.closest(PF_CARD_SEL);
@@ -476,6 +477,8 @@ function hidePortraitTip() {
 }
 function bindPortraitTip() {
   let touch = null, timer = null, suppressClick = false;
+  const canHover = e => e.pointerType === 'mouse' &&
+    (!window.matchMedia || window.matchMedia('(any-hover: hover)').matches);
   const clearTouch = () => {
     if (timer !== null) clearTimeout(timer);
     timer = null; touch = null;
@@ -512,7 +515,7 @@ function bindPortraitTip() {
     if (e.pointerType === 'touch') dismiss();
   });
   document.addEventListener('pointerover', e => {
-    if (e.pointerType === 'touch') return;
+    if (!canHover(e)) return;
     const el = portraitHost(e.target);
     if (el) showPortraitTip(el, e.clientX, e.clientY);
   });
@@ -521,11 +524,12 @@ function bindPortraitTip() {
       if (touch && touch.id === e.pointerId && Math.hypot(e.clientX - touch.x, e.clientY - touch.y) > 6) dismiss();
       return;
     }
+    if (!canHover(e)) return;
     const tip = $('pfTip'); if (!tip || tip.hidden) return;
     if (portraitHost(e.target)) movePortraitTip(e.clientX, e.clientY); else hidePortraitTip();
   });
   document.addEventListener('pointerout', e => {
-    if (e.pointerType === 'touch') return; // 손을 뗀 직후의 pointerout으로 사진이 닫히지 않게 한다.
+    if (!canHover(e)) return; // 손을 뗀 직후의 pointerout으로 사진이 닫히지 않게 한다.
     const host = portraitHost(e.target); if (!host) return;
     const to = portraitHost(e.relatedTarget);
     // 같은 초상화(행 → 배지, 배지 → 행)로 움직인 것이면 툴팁을 유지한다
@@ -3253,7 +3257,7 @@ function renderDeploy() {
       const per = cl(Math.floor(wanted), 0, Math.min(10000, remaining));
       d.amounts[n] = per;
       remaining -= per;
-      body += '<div class="row"><span class="name">' + n + '</span>' +
+      body += '<div class="row"><span class="name"' + portraitAttr(n) + '>' + n + '</span>' +
         '<span class="stats">무력 ' + o.wu + ' · 지력 ' + o.zhi + '</span>' +
         '<span>병과 <select aria-label="' + n + ' 병과" id="br_' + i + '">' + opt('보병') + opt('기병') + opt('궁병') + '</select></span>' +
         '<span>진형 <select aria-label="' + n + ' 진형" id="fm_' + i + '" title="' + FORMS[curForm].desc + '">' + Object.keys(FORMS).map(fopt).join('') + '</select></span>' +
@@ -3524,7 +3528,7 @@ function renderDefenseDeploy() {
     const fm = FORMS[d.forms[n]] ? d.forms[n] : defForm(br);
     const bopt = b => '<option value="' + b + '"' + (br === b ? ' selected' : '') + '>' + b + '</option>';
     const fopt = f => '<option value="' + f + '"' + (fm === f ? ' selected' : '') + '>' + f + '</option>';
-    return '<div class="row"><span class="name">' + n + '</span>' +
+    return '<div class="row"><span class="name"' + portraitAttr(n) + '>' + n + '</span>' +
       '<span class="stats">무력 ' + o.wu + ' · 지력 ' + o.zhi + (o.used ? ' · 행동 완료' : '') + '</span>' +
       '<span>병과 <select aria-label="' + n + ' 병과" id="dbr_' + i + '">' + ['보병', '기병', '궁병'].map(bopt).join('') + '</select></span>' +
       '<span>진형 <select aria-label="' + n + ' 진형" id="dfm_' + i + '" title="' + FORMS[fm].desc + '">' +

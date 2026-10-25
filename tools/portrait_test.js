@@ -3,7 +3,7 @@
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const assert = require('node:assert/strict');
 const documentEvents = {}, windowEvents = {}, attrs = {};
-let now = 0, timerId = 0;
+let now = 0, timerId = 0, hoverAvailable = true;
 const timers = new Map();
 function advance(ms) {
   now += ms;
@@ -16,6 +16,7 @@ const tip = { hidden:true, innerHTML:'', style:{},
   getBoundingClientRect:()=>({width:254,height:285}) };
 const listen = events => (name, fn) => (events[name] ||= []).push(fn);
 const sandbox = { console, innerWidth:390, innerHeight:844,
+  matchMedia:()=>({ matches:hoverAvailable }),
   setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, due:now + ms }); return id; },
   clearTimeout:id=>timers.delete(id),
   document:{getElementById:id=>id==='pfTip'?tip:null, addEventListener:listen(documentEvents)},
@@ -30,8 +31,9 @@ function officer(name, file) {
   assert(fs.existsSync(path.join(__dirname,'..',src)));
   const host = {getAttribute:key=>({'data-portrait':src,'data-name':name})[key]};
   const card = {querySelector:()=>host};
-  const target = {closest:selector=>selector==='[data-portrait]'?null:card};
-  host.closest = selector=>selector==='[data-portrait]'?host:card;
+  const cardSelector = '.otag, .row, tr, .ut-who, .ut-head, .frow, .ub';
+  const target = {closest:selector=>selector===cardSelector?card:null};
+  host.closest = selector=>selector==='[data-portrait]'?host:selector===cardSelector?card:null;
   return {target,host,src};
 }
 const cao = officer('조조','caocao'), guan = officer('관우','guanyu');
@@ -87,6 +89,16 @@ emit('pointerdown'); windowEvent('blur'); advance(600); assert(tip.hidden);
 cao.host.isConnected = false;
 emit('pointerdown'); advance(600); emit('pointerup'); assert(tip.hidden,'removed cards do not show stale portraits');
 delete cao.host.isConnected;
+// Officer table rows and deployment names carry their own portrait attributes.
+hoverAvailable = false;
+emit('pointerover',cao.host,{pointerType:'mouse'}); assert(tip.hidden,'mobile compatibility hover does not open a portrait');
+tap(cao.host); advance(600); assert(tip.hidden,'short tapping a table row or deployment name keeps the portrait hidden');
+longTap(cao.host); assert.equal(tip.hidden,false);
+emit('pointerdown',outside);
+const control = {closest:selector=>selector==='input,select,textarea,.troop-stepper'?control:selector==='[data-portrait]'?cao.host:null};
+emit('pointerdown',control); advance(600); emit('pointerup',control); emit('click',control);
+assert(tip.hidden,'deployment inputs and troop arrow buttons do not open portraits or consume clicks');
+hoverAvailable = true;
 emit('pointerover',cao.target,{pointerType:'mouse'});
 assert.equal(tip.hidden,false,'desktop hover still opens the portrait');
 emit('pointerout',cao.target,{pointerType:'mouse',relatedTarget:cao.host});
