@@ -126,6 +126,20 @@ main{flex:1;display:flex;min-height:0}
 .map-minimap{top:10px;right:10px;width:154px}
 #mapMiniCanvas{display:block;width:100%;height:auto;aspect-ratio:6/5;border-radius:4px;background:#0a110e;cursor:crosshair;touch-action:manipulation}
 #mapFactionLegend{display:none}
+.map-faction-panel{left:10px;bottom:10px;width:188px;max-width:100%;max-height:100%;overflow:auto}
+.map-faction-panel.compact{width:108px}
+.map-faction-panel:not([open]){width:max-content}
+.faction-legend .faction-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 10px}
+.map-faction-panel.compact .faction-grid{grid-template-columns:minmax(0,1fr)}
+.faction-legend .faction-item{display:flex;align-items:center;gap:5px;min-width:0;font-size:11px;line-height:16px}
+.faction-legend .faction-item i{width:8px;height:8px;flex:none;border-radius:2px}
+.faction-legend .faction-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.faction-legend .faction-item b{margin-left:auto;color:var(--gold);font-variant-numeric:tabular-nums;font-weight:500}
+.faction-caption{text-align:right;padding:0 3px 4px;color:var(--muted);font-size:10px}
+.faction-routes{display:flex;gap:6px;margin-top:7px;padding:5px 3px 1px;border-top:1px solid var(--line);font-size:10.5px;color:var(--muted)}
+.faction-routes span{display:flex;align-items:center;gap:6px}
+.faction-routes i{width:14px;border-top:2px solid #eb7c56}
+.faction-routes .friendly{border-color:#face7e}
 #attackIntro{position:fixed;inset:0;z-index:80;cursor:wait;display:flex;align-items:flex-end;justify-content:center;padding:24px;color:#f6eedb;font-weight:700;font-size:16px;text-shadow:0 2px 5px #000;background:linear-gradient(transparent 85%,#07100ce8);border-bottom:4px solid var(--attack-color)}
 #attackIntro[hidden]{display:none}
 #attackIntro.automated{pointer-events:none;cursor:default}
@@ -628,15 +642,12 @@ input[type=checkbox]{accent-color:var(--gold2)}
   #mapWrap{flex:1;min-height:0;padding:8px;overflow:hidden}
   #mapCanvas{width:auto;height:auto;max-width:100%;max-height:100%;border-radius:10px}
   .map-minimap{top:4px;right:4px;width:104px;padding:3px;border-radius:6px}
+  .map-faction-panel{display:none}
   .minimap-panel>summary{min-height:44px;padding:0;font-size:10px;gap:4px}
   #mapFactionLegend{display:block;position:relative;z-index:1;flex:none;align-self:stretch;padding:7px 9px;border:1px solid var(--line2);border-radius:9px;background:#101a14}
   #mapFactionLegend .legend-heading{display:flex;justify-content:space-between;gap:8px;margin-bottom:5px;font-size:10px;color:var(--muted)}
   #mapFactionLegend .legend-heading b{color:var(--gold);font-weight:600}
   #mapFactionLegend .faction-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px 10px}
-  #mapFactionLegend .faction-item{display:flex;align-items:center;gap:5px;min-width:0;font-size:11px;line-height:16px}
-  #mapFactionLegend .faction-item i{width:8px;height:8px;flex:none;border-radius:2px}
-  #mapFactionLegend .faction-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #mapFactionLegend .faction-item b{margin-left:auto;color:var(--gold);font-variant-numeric:tabular-nums;font-weight:500}
   #mapTools{gap:8px}
   #mapTools button{width:44px;height:44px}
   #side{display:none;flex:1;min-height:0;height:auto;overflow:hidden}
@@ -779,9 +790,13 @@ input[type=checkbox]{accent-color:var(--gold2)}
           <summary>전체지도<span class="minimap-fold" aria-hidden="true"></span></summary>
           <canvas id="mapMiniCanvas" width="288" height="240" role="img" aria-label="전체 지도 미니맵 · 누르면 해당 위치로 이동" title="전체 지도 · 누르면 해당 위치로 이동"></canvas>
         </details>
+        <details id="mapFactionPanel" class="minimap-panel map-faction-panel" open aria-label="세력 일람">
+          <summary>세력<span class="minimap-fold" aria-hidden="true"></span></summary>
+          <div id="mapFactionContent" class="faction-legend"></div>
+        </details>
         <div id="mapHint" role="group" aria-label="지도 목적지 선택"></div>
       </div>
-      <div id="mapFactionLegend" role="region" aria-label="세력 일람"></div>
+      <div id="mapFactionLegend" class="faction-legend" role="region" aria-label="세력 일람"></div>
       <div class="map-footer">
       <div class="map-gesture-hint gesture-hint" title="두 손가락으로 확대·축소 · 드래그로 이동 · 도시를 눌러 명령">두 손가락으로 확대·축소 · 드래그로 이동 · 도시를 눌러 명령</div>
       <div id="mapTools" role="group" aria-label="지도 배율">

@@ -79,7 +79,7 @@ function bindCanvasNavigation(canvas, { size, read, write, tap, enabled = () => 
   return { get active() { return pointers.size > 0; } };
 }
 
-/* 제목은 탭으로 접고, 드래그로 이동한다. 두 미니맵의 위치는 세션 중 각각 유지한다. */
+/* 제목은 탭으로 접고, 드래그로 이동한다. 미니맵·세력 패널의 위치는 세션 중 각각 유지한다. */
 const minimapPositions = new Map();
 function bindMinimapDrag(panel) {
   const handle = panel?.querySelector?.('summary'), parent = panel?.parentElement;
@@ -893,6 +893,7 @@ function boot() {
   cvM.style.cursor = 'grab';
   const minimapPanel = $('mapMinimap');
   bindMinimapDrag(minimapPanel);
+  bindMinimapDrag($('mapFactionPanel'));
   if (minimapPanel) minimapPanel.addEventListener('toggle', drawMinimap);
   const mini = $('mapMiniCanvas');
   if (mini) mini.addEventListener('pointerup', e => {
@@ -2154,53 +2155,6 @@ function drawChrome(x, W, H, SERIF, SANS) {
   x.fillText('北', 0, -19);
   x.restore();
 
-  /* 범례 */
-  if (!isMobileMap()) {
-  const fs = Object.keys(G.factions).filter(fid => factionCities(fid).length)
-    .sort((a, b) => factionCities(b).length - factionCities(a).length);
-  const cols = fs.length > 8 ? 2 : 1;
-  const rows = Math.ceil(fs.length / cols);
-  const lw = cols === 2 ? 304 : 174;
-  const lh = rows * 17 + 32 + 24;
-  const lx = 14, ly0 = H - lh - 20;
-  x.save();
-  pRound(x, lx, ly0, lw, lh, 10);
-  const plg = x.createLinearGradient(0, ly0, 0, ly0 + lh);
-  plg.addColorStop(0, 'rgba(20,22,16,.86)');
-  plg.addColorStop(1, 'rgba(8,13,10,.8)');
-  x.fillStyle = plg; x.fill();
-  x.strokeStyle = 'rgba(230,195,124,.2)'; x.lineWidth = 1; x.stroke();
-  pRound(x, lx + 4, ly0 + 4, lw - 8, lh - 8, 8);
-  x.strokeStyle = 'rgba(230,195,124,.08)'; x.stroke();
-  x.textAlign = 'left'; x.textBaseline = 'alphabetic';
-  x.fillStyle = 'rgba(230,195,124,.9)'; x.font = 'bold 10px ' + SANS;
-  x.fillText('세 력', lx + 14, ly0 + 18);
-  fs.forEach((fid, i) => {
-    const f = G.factions[fid];
-    const cx = lx + 12 + (i % cols) * 148;
-    const cy = ly0 + 32 + Math.floor(i / cols) * 17;
-    x.fillStyle = f.color;
-    pRound(x, cx, cy - 8, 9, 9, 2); x.fill();
-    x.fillStyle = '#dfe7d9'; x.font = '11.5px ' + SANS;
-    x.fillText(f.name, cx + 14, cy);
-    x.fillStyle = 'rgba(230,195,124,.85)'; x.textAlign = 'right';
-    x.fillText(String(factionCities(fid).length), cx + 128, cy);
-    x.textAlign = 'left';
-  });
-  /* 군로 범례 */
-  const ly = ly0 + rows * 17 + 40;
-  x.font = '10.5px ' + SANS;
-  x.strokeStyle = 'rgba(235,124,86,.75)'; x.lineWidth = 2;
-  x.beginPath(); x.moveTo(lx + 12, ly - 4); x.lineTo(lx + 34, ly - 4); x.stroke();
-  x.fillStyle = 'rgba(224,232,218,.82)';
-  x.fillText('전선', lx + 40, ly);
-  x.strokeStyle = 'rgba(250,206,126,.8)';
-  x.beginPath(); x.moveTo(lx + 90, ly - 4); x.lineTo(lx + 112, ly - 4); x.stroke();
-  x.fillStyle = 'rgba(224,232,218,.82)';
-  x.fillText('아군', lx + 118, ly);
-  x.restore();
-  }
-
   /* 축척 : 확대 배율을 반영해 구간을 자동 선택 */
   const pxPerKm = (MAP_VIEW.kx / 96.4) * view.scale;
   const steps = [25, 50, 100, 200, 500];
@@ -2360,13 +2314,21 @@ function drawIntroArrow(x,a,b,color,progress,arrivalRing) {
 }
 
 function renderMapFactionLegend() {
-  const el = $('mapFactionLegend');
-  if (!el || !isMobileMap()) return;
   const factions = Object.keys(G.factions).map(fid => ({f:G.factions[fid],count:factionCities(fid).length}))
     .filter(entry => entry.count).sort((a,b) => b.count-a.count);
-  const html = '<div class="legend-heading"><b>세력 일람</b><span>보유 도시 수</span></div><div class="faction-grid">' +
+  const grid = '<div class="faction-grid">' +
     factions.map(({f,count}) => '<div class="faction-item"><i style="background:' + f.color + '"></i><span>' + f.name + '</span><b>' + count + '</b></div>').join('') + '</div>';
-  if (el.innerHTML !== html) el.innerHTML = html;
+  if (isMobileMap()) {
+    const el = $('mapFactionLegend');
+    const html = '<div class="legend-heading"><b>세력 일람</b><span>보유 도시 수</span></div>' + grid;
+    if (el && el.innerHTML !== html) el.innerHTML = html;
+  } else {
+    const panel = $('mapFactionPanel'), el = $('mapFactionContent');
+    if (panel) panel.classList.toggle('compact', factions.length <= 8);
+    const html = '<div class="faction-caption">보유 도시 수</div>' + grid +
+      '<div class="faction-routes"><span><i></i>전선</span><span><i class="friendly"></i>아군</span></div>';
+    if (el && el.innerHTML !== html) el.innerHTML = html;
+  }
 }
 
 function drawMinimap() {
