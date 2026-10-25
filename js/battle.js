@@ -2598,6 +2598,62 @@ const Battle = (function () {
     if (hostile) hostile.textContent = String(units.filter(u => u.side !== friend).length);
   }
 
+  // 화면 좌표로 그려 전장 확대·고해상도에서도 피해 글자 크기를 일정하게 유지한다.
+  function drawFloats() {
+    if (!B.floats.length) return;
+    const view = cv.getBoundingClientRect(), W = view.width, H = view.height;
+    if (!W || !H) return;
+    const sx = W / (COLS * TILE), sy = H / (ROWS * TILE);
+    const size = W < 600 ? 11 : 12, gap = 3, placed = [];
+    ctx.save();
+    ctx.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const font = px => '600 ' + px + 'px "Malgun Gothic",sans-serif';
+    B.floats.forEach(f => {
+      const ax = ((f.x + .5) * TILE * camera.scale + camera.px) * sx;
+      const cy = ((f.y + .5) * TILE * camera.scale + camera.py) * sy;
+      if (ax < 0 || ax > W || cy < 0 || cy > H) return;
+      // 긴 공격명은 작은 보조 줄로 분리하고, 피해량은 원래의 정확한 수치를 표시한다.
+      const parts = f.text.match(/^(.+?)\s+([+-][\d,]+)$/);
+      const label = parts ? parts[1] : '', value = parts ? parts[2] : f.text;
+      const measure = (text, px) => {
+        ctx.font = font(px);
+        return ctx.measureText(text)?.width || text.length * px;
+      };
+      const w = Math.min(W - 12, 110, Math.max(measure(value, size), measure(label, 9)) + 12);
+      const h = label ? 31 : 20;
+      const x = cl(ax - w / 2, 6, W - w - 6);
+      const ay = cy - TILE * camera.scale * sy * .38;
+      const preferred = cl(ay - h - gap, 6, Math.max(6, H - h - 6));
+      // 가까운 빈 높이를 찾아 같은 칸·인접 칸의 표시끼리도 겹치지 않게 한다.
+      const candidates = [preferred, ...placed.flatMap(p => [p.y - h - gap, p.y + p.h + gap])]
+        .map(y => cl(y, 6, Math.max(6, H - h - 6)))
+        .sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred));
+      const y = candidates.find(y => placed.every(p =>
+        x + w + gap <= p.x || p.x + p.w + gap <= x || y + h + gap <= p.y || p.y + p.h + gap <= y)) ?? preferred;
+      placed.push({ x, y, w, h, ax, ay: cl(ay, 3, H - 3), label, value });
+    });
+    // 연결선을 먼저 그려 배지를 옮겨도 어느 부대의 피해인지 알 수 있게 한다.
+    ctx.strokeStyle = 'rgba(255,217,138,.65)'; ctx.lineWidth = 1;
+    placed.forEach(p => {
+      ctx.beginPath(); ctx.moveTo(p.ax, p.ay);
+      ctx.lineTo(cl(p.ax, p.x + 4, p.x + p.w - 4), p.ay < p.y ? p.y : p.y + p.h);
+      ctx.stroke();
+    });
+    placed.forEach(p => {
+      pRound(ctx, p.x, p.y, p.w, p.h, 4);
+      ctx.fillStyle = 'rgba(16,20,22,.94)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,217,138,.45)'; ctx.stroke();
+      if (p.label) {
+        ctx.font = font(9); ctx.fillStyle = '#e2d5bd';
+        ctx.fillText(p.label, p.x + p.w / 2, p.y + 8, p.w - 10);
+      }
+      ctx.font = font(size); ctx.fillStyle = '#ffd98a';
+      ctx.fillText(p.value, p.x + p.w / 2, p.y + (p.label ? 22 : 10), p.w - 10);
+    });
+    ctx.restore();
+  }
+
   function draw() {
     if (!B || !ctx) return;
     const W = COLS * TILE, H = ROWS * TILE;
@@ -2631,16 +2687,6 @@ const Battle = (function () {
     }
     B.units.forEach(x => { if (x.alive) drawUnit(x); });
     drawFx();
-    // 피해 숫자
-    B.floats.forEach(f => {
-      ctx.font = 'bold ' + Math.max(12, Math.round(TILE * 0.26)) + 'px "Malgun Gothic"';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-      ctx.lineWidth = 3; ctx.strokeStyle = '#000';
-      ctx.strokeText(f.text, f.x * TILE + TILE / 2, f.y * TILE + TILE * 0.4);
-      ctx.fillStyle = '#ffd98a';
-      ctx.fillText(f.text, f.x * TILE + TILE / 2, f.y * TILE + TILE * 0.4);
-      ctx.textAlign = 'left';
-    });
     /* 비네트 — 전장이 한 장의 그림처럼 보이도록 테두리를 눌러준다 */
     if (ctx.createRadialGradient) {
       const vg = ctx.createRadialGradient(W / 2, H * 0.46, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.74);
@@ -2652,6 +2698,7 @@ const Battle = (function () {
         ctx.fillRect(0, 0, W, H);
       }
     }
+    drawFloats();
     drawMinimap();
   }
 
