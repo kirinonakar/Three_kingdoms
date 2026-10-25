@@ -242,10 +242,14 @@ const Battle = (function () {
             '<div class="battle-map-footer"><div class="gesture-hint" title="두 손가락으로 확대·축소 · 드래그로 이동 · 부대를 눌러 선택">두 손가락으로 확대·축소 · 드래그로 이동 · 부대를 눌러 선택</div>' +
             '<div class="battle-zoom" role="group" aria-label="전장 배율"><button type="button" onclick="Battle.zoomBy(1.25)" aria-label="전장 확대">＋</button><button type="button" onclick="Battle.zoomBy(.8)" aria-label="전장 축소">－</button><button type="button" onclick="Battle.zoomReset()" aria-label="전장 전체 보기">⟲</button><span id="bZoomLabel">×1.00</span></div></div>' +
           '</div>' +
-          '<div class="battle-side">' +
+          '<div class="battle-side" id="bSide" data-panel="commands">' +
             '<div id="bScore" class="bscore"></div>' +
-            '<div class="battle-details"><div id="bUnit"></div><div id="bLog"></div></div>' +
-            '<div class="battle-commands"><div id="bActs"></div>' +
+            '<nav class="battle-panel-tabs" aria-label="전투 패널">' +
+              '<button type="button" id="bTab-info" aria-pressed="false" aria-controls="bInfoPanel" onclick="Battle.panelTab(\'info\')">정보</button>' +
+              '<button type="button" id="bTab-commands" aria-pressed="true" aria-controls="bCommandPanel" onclick="Battle.panelTab(\'commands\')">명령</button>' +
+            '</nav>' +
+            '<div class="battle-details" id="bInfoPanel"><div id="bUnit"></div><div id="bLog"></div></div>' +
+            '<div class="battle-commands" id="bCommandPanel"><div id="bActs"></div></div>' +
             '<div class="battle-foot">' +
               '<button id="bReinf" onclick="Battle.act(\'reinforce\')">원군</button>' +
               '<button id="bAuto" onclick="Battle.act(\'auto\')">자동 진행</button>' +
@@ -253,7 +257,7 @@ const Battle = (function () {
                 '<button id="bRetreat" onclick="Battle.act(\'retreat\')"' +
                   (B.playerSide === 'def' ? ' title="잔존 병력을 이끌고 다른 도시로 후퇴"' : '') + '>후퇴</button>' : '') +
               '<button id="bNext" onclick="Battle.act(\'nextTurn\')" title="남은 부대를 대기시키고 다음 턴으로">다음 턴 ▶</button>' +
-            '</div></div>' +
+            '</div>' +
           '</div>' +
         '</div>' +
         '<div id="bUnitTooltip" class="battle-unit-tooltip" role="tooltip" hidden></div>' +
@@ -347,6 +351,17 @@ const Battle = (function () {
     }
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fitCanvas);
     else fitCanvas();
+  }
+
+  function panelTab(panel) {
+    if (!B || !['info', 'commands'].includes(panel)) return;
+    const side = $('bSide');
+    if (!side || !side.dataset) return;
+    side.dataset.panel = panel;
+    ['info', 'commands'].forEach(name => {
+      const button = $('bTab-' + name);
+      if (button && button.setAttribute) button.setAttribute('aria-pressed', String(name === panel));
+    });
   }
 
   function inspectTerrain(e) {
@@ -3557,7 +3572,7 @@ const Battle = (function () {
 
   return {
     start, act, setStrat, setForm, reinforce, retreatTo, clickCell, observation,
-    toggleBgm, toggleSfx, syncSound, zoomBy, zoomReset, hideUnitTooltip,
+    toggleBgm, toggleSfx, syncSound, zoomBy, zoomReset, hideUnitTooltip, panelTab,
     reinforceDays: REINF_DAYS,
     get active() { return !!B && !B.over; },
     get state() { return B; }

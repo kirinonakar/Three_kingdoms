@@ -934,8 +934,9 @@ function boot() {
   bindPortraitTip();                                  // 무장 초상화 호버·터치 미리보기
   migrateLegacySave();                                // 구버전 단일 저장을 슬롯으로 옮긴다
   if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(() => { if (G) drawMap(); }).observe(cvM);
+    new ResizeObserver(() => { if (G) drawMap(); }).observe(cvM.parentElement);
   }
+  window.addEventListener('resize', () => mobilePanel($('app')?.dataset.mobilePanel || 'map'));
   const navigation = bindCanvasNavigation(cvM, {
     size: () => ({ width: MAP_WIDTH, height: MAP_HEIGHT, maxScale: VIEW_MAX }),
     read: () => view,
@@ -1054,11 +1055,23 @@ function mobilePanel(panel) {
   if (!['map', 'city', 'log'].includes(panel)) return;
   const app = $('app');
   if (app && app.dataset) app.dataset.mobilePanel = panel;
+  const activePanel = isLandscapeLayout() && panel === 'map' ? 'city' : panel;
   ['map', 'city', 'log'].forEach(name => {
     const button = $('mobileTab-' + name);
-    if (button && button.setAttribute) button.setAttribute('aria-pressed', String(name === panel));
+    if (button && button.setAttribute) button.setAttribute('aria-pressed', String(name === activePanel));
   });
-  if (panel === 'map' && app && app.isConnected && cvM && G) drawMap();
+  ['info', 'commands'].forEach(name => {
+    const button = $('mobileTab-' + name);
+    if (button && button.setAttribute) button.setAttribute('aria-pressed', String(activePanel === 'city' && name === (app?.dataset.cityPanel || 'info')));
+  });
+  if ((panel === 'map' || isLandscapeLayout()) && app && app.isConnected && cvM && G) drawMap();
+}
+function mobileCityTab(panel) {
+  if (!['info', 'commands'].includes(panel)) return;
+  const app = $('app');
+  if (!app || !app.dataset) return;
+  app.dataset.cityPanel = panel;
+  mobilePanel('city');
 }
 function startScreen() {
   setTitleMode(true);
@@ -1928,8 +1941,12 @@ function drawLinks(x, sc) {
 }
 
 /* 확대에 따라 성과 병력 표시도 키운다. 모바일에서는 실제 화면 크기도 보정한다. */
+function isLandscapeLayout() {
+  return typeof window !== 'undefined' && window.innerWidth <= 1180 &&
+    window.innerHeight > 0 && window.innerHeight <= 600 && window.innerWidth > window.innerHeight;
+}
 function isMobileMap() {
-  return typeof window !== 'undefined' && window.innerWidth > 0 && window.innerWidth <= 940;
+  return typeof window !== 'undefined' && window.innerWidth > 0 && (window.innerWidth <= 940 || isLandscapeLayout());
 }
 function cityMarkerScale(sc = view.scale) {
   const rect = cvM?.getBoundingClientRect();
@@ -2670,7 +2687,7 @@ function renderCityPanel() {
       hire: 'Game.cmdHire(\'' + c.name + '\')', reward: 'Game.cmdReward(\'' + c.name + '\')'
     };
     const blockedBase = noCmd || noOff;
-    dock = '<div class="cmd-dock">';
+    dock = '<div class="cmd-dock"><div class="city-command-heading"><b>' + c.name + '</b><span>명령권 ' + G.cmd + ' / ' + G.cmdMax + '</span></div>';
     groups.forEach(([label, list]) => {
       const cols = list.length === 2 ? ' c2' : list.length === 3 ? ' c3' : (list.length === 5 ? ' c5' : '');
       dock += '<div class="cmdgroup"><span class="cg-label">' + label + '</span><div class="cmds' + cols + '">' +
@@ -2693,12 +2710,13 @@ function renderCityPanel() {
     const adjacent = c.links.some(n => G.cities[n].owner === G.pf);
     const canAtk = c.links.some(n => G.cities[n].owner === G.pf && G.cities[n].troops >= 1000 && availableOfficers(n).length);
     colB += '<div class="enemy-note">' + (canAtk ? '인접한 내 도시에서 <b>출진</b>할 수 있습니다.' : (adjacent ? '인접한 내 도시에 출진 가능한(이번 달 미행동) 무장이 없습니다.' : '인접한 내 도시가 없어 공격할 수 없습니다.')) + '</div>';
-    if (canAtk) dock = '<div class="cmd-dock"><div class="cmdgroup"><span class="cg-label">군사</span><div class="cmds c2"><button class="cmd"' +
+    if (canAtk) dock = '<div class="cmd-dock"><div class="city-command-heading"><b>' + c.name + '</b><span>출진 대상</span></div><div class="cmdgroup"><span class="cg-label">군사</span><div class="cmds c2"><button class="cmd"' +
       (noCmd ? ' disabled title="명령권이 부족합니다"' : ' title="이 도시로 출진합니다 (명령 1)"') +
       ' onclick="Game.cmdAttackFrom(\'' + c.name + '\')"><i class="ico">攻</i><span>이 도시 공격</span></button></div></div></div>';
   }
   h += '<div class="city-cols"><div class="city-col">' + colA + '</div><div class="city-col">' + colB + '</div></div>';
-  el.innerHTML = commandWarning + '<div class="city-details">' + h + '</div>' + dock;
+  el.innerHTML = commandWarning + '<div class="city-details">' + h + '</div>' + dock +
+    (!dock ? '<div class="city-command-empty"><b>' + c.name + '</b><p>이 도시에서 실행할 수 있는 명령이 없습니다. 정보 탭에서 도시 상태를 확인하세요.</p></div>' : '');
 }
 
 /* 로그 문구로 효과음을 고른다 — 명령 결과가 전황 기록에 남을 때 소리가 난다 */
@@ -5654,7 +5672,7 @@ const Game = {
   openReinforce, pickReinforce, doReinforce, requestAllyReinforce,
   cmdHire, doHire, cmdReward, doReward,
   diploGift, diploAlly, diploBreak,
-  selectCity, toTitle, zoomBy, zoomReset, setZoom, mobilePanel,
+  selectCity, toTitle, zoomBy, zoomReset, setZoom, mobilePanel, mobileCityTab,
   get state() { return G; },
   get view() { return view; },
   _debug: {
