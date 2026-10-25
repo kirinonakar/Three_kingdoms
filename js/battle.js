@@ -3386,6 +3386,9 @@ const Battle = (function () {
     // 패널을 갱신해도 같은 일기토의 CSS 애니메이션을 다시 시작하지 않는다.
     if (el.duelScene === scene) return;
     el.duelScene = scene;
+    // 일기토 신청 순서와 관계없이 전투 공격군은 왼쪽, 수비군은 오른쪽에 둔다.
+    const left = scene.attacker.side === 'atk' ? scene.attacker : scene.defender;
+    const right = scene.attacker.side === 'def' ? scene.attacker : scene.defender;
     const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const card = (u, side) => {
       const won = u === scene.winner, src = u.officer.portrait || portraitSource(u.name);
@@ -3397,7 +3400,7 @@ const Battle = (function () {
     };
     el.innerHTML = '<div class="duel-scene" style="--duel-duration:' + DUEL_SCENE_MS + 'ms">' +
       '<div class="duel-stage"><div class="duel-heading">一騎討 <span>일기토</span></div>' +
-      '<div class="duel-fighters">' + card(scene.attacker, 'left') + card(scene.defender, 'right') +
+      '<div class="duel-fighters">' + card(left, 'left') + card(right, 'right') +
       '<span class="duel-impact" aria-hidden="true">⚔</span></div>' +
       '<div class="duel-result" role="status">' + escape(scene.winner.name) + ' 승리!</div></div></div>';
   }
@@ -3408,15 +3411,18 @@ const Battle = (function () {
     const request = !B.over && B.duelRequest;
     if (!request) { el.innerHTML = ''; return; }
     const { attacker, defender } = request;
+    const left = attacker.side === 'atk' ? attacker : defender;
+    const right = attacker.side === 'def' ? attacker : defender;
+    const label = u => (u.side === B.playerSide ? '아군' : '적군') + ' · ' + (u === attacker ? '신청' : '응답');
     const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const loss = duelMoraleLoss(attacker) * 2;
     const html = '<div class="modal-bg top"><div class="modal duel-prompt" role="dialog" aria-modal="true" aria-labelledby="bDuelTitle" aria-describedby="bDuelCost">' +
       '<h2 id="bDuelTitle">일기토 신청</h2><p>' + escape(attacker.name) + ' 장수가 일기토를 신청했습니다.</p>' +
-      '<table class="duel-compare"><thead><tr><th scope="col">정보</th><th scope="col">아군 · 응답</th><th scope="col">적군 · 신청</th></tr></thead><tbody>' +
-      '<tr><th scope="row">무장</th><td>' + escape(defender.name) + '</td><td>' + escape(attacker.name) + '</td></tr>' +
-      '<tr><th scope="row">무력</th><td>' + defender.officer.wu + '</td><td>' + attacker.officer.wu + '</td></tr>' +
-      '<tr><th scope="row">사기</th><td>' + defender.morale + '</td><td>' + attacker.morale + '</td></tr>' +
-      '<tr><th scope="row">병력</th><td>' + commas(defender.troops) + '</td><td>' + commas(attacker.troops) + '</td></tr></tbody></table>' +
+      '<table class="duel-compare"><thead><tr><th scope="col">정보</th><th scope="col">공격군 · ' + label(left) + '</th><th scope="col">수비군 · ' + label(right) + '</th></tr></thead><tbody>' +
+      '<tr><th scope="row">무장</th><td>' + escape(left.name) + '</td><td>' + escape(right.name) + '</td></tr>' +
+      '<tr><th scope="row">무력</th><td>' + left.officer.wu + '</td><td>' + right.officer.wu + '</td></tr>' +
+      '<tr><th scope="row">사기</th><td>' + left.morale + '</td><td>' + right.morale + '</td></tr>' +
+      '<tr><th scope="row">병력</th><td>' + commas(left.troops) + '</td><td>' + commas(right.troops) + '</td></tr></tbody></table>' +
       '<p id="bDuelCost">거부하면 병력 손실 없이 아군 사기가 ' + loss + ' 감소합니다(일기토 패배 시의 2배, ' + defender.morale + ' → ' + Math.max(0, defender.morale - loss) + ').' +
       (defender.morale <= loss ? ' 사기가 0이 되어 이 부대는 병력을 보존한 채 전장에서 도주합니다.' : '') + '</p>' +
       '<div class="foot"><button id="bDuelAccept" onclick="Battle.act(\'duelAccept\')">수락</button><button id="bDuelRefuse" onclick="Battle.act(\'duelRefuse\')">거부 · 사기 -' + loss + '</button></div></div></div>';

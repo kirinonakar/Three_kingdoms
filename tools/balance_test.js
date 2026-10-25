@@ -115,6 +115,10 @@ for (const playerSide of ['atk','def']) for (const accept of [false,true]) for (
   const html=els.bDuelPrompt.innerHTML;
   for(const value of ['role="dialog"','아군','적군','Enemy Challenger','Friendly Defender','91','77','83','86','4,321',troops===333?'333':'3,000','수락','거부'])
     assert(html.includes(value),'duel popup missing '+value);
+  const left=a.side==='atk'?a:d,right=a.side==='def'?a:d;
+  assert(html.includes('<th scope="col">공격군 · '+(left===a?'적군 · 신청':'아군 · 응답')+'</th><th scope="col">수비군 · '+(right===a?'적군 · 신청':'아군 · 응답')+'</th>'));
+  for(const [title,l,r] of [['무장',left.name,right.name],['무력',left.officer.wu,right.officer.wu],['사기',left.morale,right.morale],['병력',left.troops.toLocaleString('en-US'),right.troops.toLocaleString('en-US')]])
+    assert(html.includes('<th scope="row">'+title+'</th><td>'+l+'</td><td>'+r+'</td>'),'comparison must keep the attacking army on the left: '+title);
   const observation=Battle.observation();
   assert.equal(observation.duelRequest.refusalMoraleLoss,Math.round(25*Math.min(1,troops/1000))*2);
   assert(observation.tiles.every(t=>t.action===null),'board input must pause while awaiting a response');
@@ -124,6 +128,10 @@ for (const playerSide of ['atk','def']) for (const accept of [false,true]) for (
   assert.equal(b.duelRequest,null);assert.equal(els.bDuelPrompt.innerHTML,'');
   assert.equal(!!b.duelScene,accept,'only accepted duels show the portrait animation');
   assert.equal(!!els.bDuelScene.innerHTML,accept);
+  if(accept) {
+    const cards=[...els.bDuelScene.innerHTML.matchAll(/class="duel-fighter (left|right) (winner|loser)"[\s\S]*?class="duel-name">([^<]+)/g)];
+    assert.deepEqual(cards.map(card=>[card[1],card[3]]),[['left',left.name],['right',right.name]],'portrait order must follow army sides on either player side');
+  }
   const scale=Math.min(1,troops/1000);
   assert.equal(d.troops,accept?4321-Math.round(4321*.1*scale):4321);
   assert.equal(d.morale,86-Math.round(25*scale)*(accept?1:2));
@@ -149,9 +157,10 @@ for(const auto of [false,true]) {
 console.log('[OK] duel accept/refuse on both armies, comparison popup, paused inputs, double scaled morale loss, no refusal troop loss, AI responses');
 
 // Both outcomes must use the actual winner, hold all input, and finish before play resumes.
-for (const roll of [0,.99]) for (const auto of [false,true]) {
-  b=setup([unit('하후돈',3000),unit('ally',3000)],[unit('이각',3000)]);
+for (const roll of [0,.99]) for (const auto of [false,true]) for (const challengerSide of ['atk','def']) {
+  b=setup([unit('하후돈',3000),unit('ally',3000)],[unit('이각',3000),unit('def ally',3000)]);
   a=b.units[0];d=b.units[2];d.x=5;b.units[1].x=3;b.sel=a;b.auto=auto;
+  if(challengerSide==='def') { [a,d]=[d,a];b.sel=a;b.playerSide='def';b.side='def'; }
   random=()=>roll;pendingTimers=[];
   p.doDuel(a,d);
   const winner=roll===0?a:d,loser=roll===0?d:a,scene=b.duelScene;
@@ -159,8 +168,10 @@ for (const roll of [0,.99]) for (const auto of [false,true]) {
   assert.equal(pendingTimers.length,1);assert.equal(pendingTimers[0].ms,2400,'auto mode must preserve the entire duel');
   const html=els.bDuelScene.innerHTML;
   assert(html.includes('xiahoudun.jpg')&&html.includes('lijue.jpg'),'show both existing portraits');
-  assert(html.includes('duel-fighter '+(winner===a?'left':'right')+' winner'));
-  assert(html.includes('duel-fighter '+(loser===a?'left':'right')+' loser'));
+  assert(html.includes('duel-fighter '+(winner.side==='atk'?'left':'right')+' winner'));
+  assert(html.includes('duel-fighter '+(loser.side==='atk'?'left':'right')+' loser'));
+  const cards=[...html.matchAll(/class="duel-fighter (left|right) (winner|loser)"[\s\S]*?class="duel-name">([^<]+)/g)];
+  assert.deepEqual(cards.map(card=>[card[1],card[3]]),[['left','하후돈'],['right','이각']],'army order must remain fixed for either challenger and winner');
   assert(html.includes(winner.name+' 승리!'));
   // Any panel refresh must preserve the DOM, so CSS animations keep their current time.
   let rewrites=0,storedHtml=html;
