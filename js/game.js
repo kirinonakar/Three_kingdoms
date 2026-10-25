@@ -426,6 +426,7 @@ const PF_TIP_SEL = '[data-portrait]';
    그 카드의 어디를 가리켜도 같은 초상화를 툴팁으로 띄운다. */
 const PF_CARD_SEL = '.otag, .row, tr, .ut-who, .ut-head, .frow, .ub';
 function portraitHost(target) {
+  if (target && !target.closest) target = target.parentElement;
   if (!target || !target.closest) return null;
   if (target.closest('input,select,textarea,.troop-stepper')) return null;
   const own = target.closest(PF_TIP_SEL);
@@ -510,7 +511,12 @@ function bindPortraitTip() {
     suppressClick = false;
     e.preventDefault(); e.stopImmediatePropagation();
   }, true);
-  document.addEventListener('contextmenu', e => { if (touch || suppressClick) e.preventDefault(); });
+  document.addEventListener('selectstart', e => {
+    if ((touch || suppressClick) && portraitHost(e.target)) e.preventDefault();
+  }, true);
+  document.addEventListener('contextmenu', e => {
+    if (touch || suppressClick || e.pointerType === 'touch' && portraitHost(e.target)) e.preventDefault();
+  });
   document.addEventListener('pointercancel', e => {
     if (e.pointerType === 'touch') dismiss();
   });

@@ -52,6 +52,10 @@ function tap(target=cao.target) {
 }
 function longTap(target=cao.target) {
   emit('pointerdown',target); advance(499); assert(tip.hidden,'portrait waits for the long press threshold');
+  const selection = emit('selectstart',target,{ preventDefault() { this.prevented = true; } });
+  assert(selection.prevented,'native text selection must not interrupt a portrait long press');
+  const context = emit('contextmenu',target,{ preventDefault() { this.prevented = true; } });
+  assert(context.prevented,'native long-press menus must not interrupt the portrait');
   advance(1);
   emit('pointerup',target); emit('pointerout',target);
   const click = emit('click',target,{
@@ -97,7 +101,13 @@ longTap(cao.host); assert.equal(tip.hidden,false);
 emit('pointerdown',outside);
 const control = {closest:selector=>selector==='input,select,textarea,.troop-stepper'?control:selector==='[data-portrait]'?cao.host:null};
 emit('pointerdown',control); advance(600); emit('pointerup',control); emit('click',control);
+emit('selectstart',control);
 assert(tip.hidden,'deployment inputs and troop arrow buttons do not open portraits or consume clicks');
+emit('pointerdown',cao.host);
+const textSelection = emit('selectstart',{parentElement:cao.host},{preventDefault() {this.prevented=true;}});
+assert(textSelection.prevented,'text-node selection uses the portrait owner');
+emit('pointercancel'); advance(600); assert(tip.hidden);
+emit('selectstart',outside);
 hoverAvailable = true;
 emit('pointerover',cao.target,{pointerType:'mouse'});
 assert.equal(tip.hidden,false,'desktop hover still opens the portrait');
