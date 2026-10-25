@@ -116,4 +116,18 @@ assert.equal(tip.hidden,false,'moving between name and badge keeps the portrait'
 emit('pointerout',cao.target,{pointerType:'mouse',relatedTarget:outside}); assert(tip.hidden);
 emit('pointerup',cao.target,{pointerType:'mouse'}); assert(tip.hidden);
 assert.equal(timers.size,0);
+// Live loyalty is shared by desktop hover and mobile long-press overlays.
+vm.runInContext("G={officers:[{name:'조조',wu:72,zhi:96,pol:94,cha:96,skill:'',faction:'cao',loyalty:100,honor:77,status:'active'},"+
+  "{name:'관우',wu:97,zhi:78,pol:75,cha:93,skill:'',faction:'free',loyalty:0,status:'active'}],factions:{cao:{name:'조조'}}};",sandbox);
+emit('pointerover',cao.target,{pointerType:'mouse'});
+assert.match(tip.innerHTML,/충성도 <b>100<\/b>/);
+assert(!/의리|honor/.test(tip.innerHTML),'honor stays hidden from the portrait overlay');
+emit('pointerout',cao.target,{pointerType:'mouse',relatedTarget:outside});
+longTap(guan.target); assert.match(tip.innerHTML,/충성도 <b>0<\/b>/);
+vm.runInContext("Object.assign(G.officers[1],{faction:'cao',status:'pow',loyalty:73});",sandbox);
+longTap(guan.target); assert.match(tip.innerHTML,/충성도 <b>73<\/b>/); assert.match(tip.innerHTML,/포로/);
+vm.runInContext('G.officers[1].loyalty=41;',sandbox);
+longTap(guan.target); assert.match(tip.innerHTML,/충성도 <b>41<\/b>/);
+assert(!tip.innerHTML.includes('충성도 <b>73</b>'),'reopening an overlay must refresh changed loyalty');
+emit('pointerdown',outside); assert.equal(timers.size,0);
 console.log('Portrait long press, short-tap actions, dismissal, gesture cancellation, viewport bounds and desktop hover passed.');

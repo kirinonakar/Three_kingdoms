@@ -4,10 +4,13 @@
 'use strict';
 const SAVE_KEY = 'sangokji_save_v1';        // 구버전 단일 슬롯 — 자동저장 슬롯 1로 옮긴다
 const SAVE_SLOTS = 3;                       // 수동 3개 + 자동 3개를 별도로 보관한다
-const SAVE_VERSION = 5;
+const SAVE_VERSION = 7;
 const saveSlotKey = (n, kind = 'auto') => SAVE_KEY + (kind === 'manual' ? '_manual_slot' : '_slot') + n;
 const saveMetaKey = (n, kind = 'auto') => SAVE_KEY + (kind === 'manual' ? '_manual_meta' : '_meta') + n;
 const GRACE_TURNS = 2;      // 초반 2개월은 AI가 플레이어 도시를 공격하지 않는다
+const ENEMY_HIRE_LOYALTY_LIMIT = 85;
+const ENEMY_CITY_FREE_HIRE_RATE = 0.7;
+const HIRED_LOYALTY_MIN = 70, HIRED_LOYALTY_MAX = 85;
 
 const $ = id => document.getElementById(id);
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -446,6 +449,7 @@ function showPortraitTip(el, x, y) {
   if (officer) {
     content += '<div class="pf-stats">' + [['무력','wu'],['지력','zhi'],['정치','pol'],['매력','cha']].map(([label,key]) =>
       '<div><span>' + label + '</span><b>' + officer[key] + '</b></div>').join('') + '</div>';
+    if (Number.isFinite(officer.loyalty)) content += '<p class="pf-detail">충성도 <b>' + officer.loyalty + '</b></p>';
     const skill = SKILLS[officer.skill], combat = CombatRules.description(officer);
     if (skill) content += '<p class="pf-detail">' + officer.skill + ': ' + skill.desc + '</p>';
     if (combat) content += '<p class="pf-detail">' + combat + '</p>';
@@ -660,8 +664,8 @@ function makeOfficer(o, year) {
   const debut = o[8] || SCENARIO.year;
   return {
     name: o[0], faction: o[1], city: o[2], wu: o[3], zhi: o[4], pol: o[5], cha: o[6],
-    skill: o[7], loyalty: o[1] === 'free' ? 0 : ri(55, 95),
-    status: debut > year ? 'hidden' : 'active', used: false,
+    skill: o[7], loyalty: o[1] === 'free' ? 0 : ri(85, 95), honor: defaultOfficerHonor(o[0]),
+    status: debut > year ? 'hidden' : 'active', used: false, captivityMonths: 0,
     debut, join: o[9] || ''
   };
 }
@@ -669,7 +673,10 @@ function makeOfficer(o, year) {
 function syncOfficers() {
   if (!G) return;
   const known = {};
-  G.officers.forEach(o => { known[o.name] = true; });
+  G.officers.forEach(o => {
+    known[o.name] = true; o.honor = officerHonor(o);
+    o.captivityMonths = o.status === 'pow' ? (o.captivityMonths || 0) : 0;
+  });
   OFFICER_DEFS.forEach(o => {
     if (!known[o[0]]) {
       const scenario=scenarioById(G.scenario||'194'), entry=scenarioOfficer(o,scenario,scenarioCities(scenario));
@@ -719,7 +726,7 @@ function newGame(pf, scenarioId = '194') {
   // 세력 수장은 충성 100 (배신·포로 불가)
   Object.keys(factions).forEach(fid => {
     const leader = officers.find(o => o.name === leaders[fid]);
-    if (leader) leader.loyalty = 100;
+    if (leader && cityDefs.some(c => c[4] === fid)) leader.loyalty = 100;
   });
   G = {
     year: scenario.year, month: scenario.month, scenario:scenario.id, leaders, pf,
@@ -897,7 +904,7 @@ function assignScenarioRosters(scenario) {
       if (!o || o.status !== 'active') return;
       o.faction = fid;
       o.city = i === 0 ? seat : cities[i % cities.length];
-      if (o.name !== G.leaders[fid]) o.loyalty = ri(70, 92);
+      if (o.name !== G.leaders[fid]) o.loyalty = ri(85, 95);
     });
   });
 }
@@ -2648,7 +2655,7 @@ function renderCityPanel() {
     train: '훈련도와 사기를 올립니다 (명령 1)',
     move: '인접 아군 도시로 무장·병력을 옮깁니다 (명령 1)',
     attack: '인접 적 도시로 출진합니다 — 지도에서 목적지를 고릅니다 (명령 1)',
-    hire: '재야·포로 무장을 설득합니다 (명령 1)',
+    hire: '현재 도시의 재야·포로와 인접 도시의 재야·적 무장을 설득합니다 (적 현역 충성 85 미만·군주 제외·명령 1)',
     reward: '금 ' + REWARD_COST + '으로 충성도를 올립니다 (명령 1)'
   };
   let dock = '', commandWarning = '';
@@ -4264,11 +4271,12 @@ function applyBattleResult(ctx, res) {
     // 이 도시에 갇혀 있던 공격측 포로는 해방된다
     G.officers.filter(o => o.city === ctx.to && o.status === 'pow' && o.faction === ctx.atk).forEach(o => {
       o.status = 'active';
+      o.captivityMonths = 0;
       o.loyalty = Math.max(o.loyalty, 60);
     });
     // 방어측 무장: 포로 / 후퇴 도시 또는 인접 아군 도시로 도피 / 재야
     G.officers.filter(o => o.faction === prevOwner && o.city === ctx.to && o.status === 'active').forEach(o => {
-      if (cap.indexOf(o.name) >= 0) { o.status = 'pow'; return; }
+      if (cap.indexOf(o.name) >= 0) { o.status = 'pow'; o.captivityMonths = 0; return; }
       const esc = to.links.filter(n => G.cities[n].owner === prevOwner);
       const anyOwn = factionCities(prevOwner);
       const dest = (retreatTo ? retreatTo.name : '') || esc[0] || (isLeader(o.name) ? anyOwn[0] : null);
@@ -4305,7 +4313,7 @@ function applyBattleResult(ctx, res) {
         ? to.name + ' 수비군이 ' + (retreatTo ? retreatTo.name + '(으)로 ' : '') + '후퇴했습니다'
         : to.name + '은(는) 수비 병력이 없어 성을 내주었습니다');
     }
-    cap.forEach(n => { const o = off(n); if (o) { o.status = 'pow'; o.city = ctx.to; } });
+    cap.forEach(n => { const o = off(n); if (o) { o.status = 'pow'; o.city = ctx.to; o.captivityMonths = 0; } });
     log('⚔ ' + fAtk.name + '군이 ' + to.name + '을(를) 함락했습니다! (잔존 병력 ' + commas(atkTroops) + ')', 'war');
     if (helpBack.length) log('🪖 ' + to.name + ' 공격을 도운 합동 부대가 출발지로 복귀했습니다 — ' + helpBack.join('·'), '');
     if (factionCities(ctx.def).length === 0) destroyFaction(ctx.def);
@@ -4334,7 +4342,7 @@ function applyBattleResult(ctx, res) {
       const hc = G.cities[homeCity(ctx, u.name)];
       if (hc) hc.troops += (u.troops || 0);
     });
-    cap.forEach(n => { const o = off(n); if (o) { o.status = 'pow'; o.city = ctx.to; } });
+    cap.forEach(n => { const o = off(n); if (o) { o.status = 'pow'; o.city = ctx.to; o.captivityMonths = 0; } });
     log('⚔ ' + fAtk.name + '군의 ' + to.name + ' 공격이 실패했습니다. (잔존 병력 ' + commas(atkTroops) + ')', 'war');
     if (backDef.length) log('🪖 ' + to.name + ' 수비에 참전한 원군이 출발지로 복귀했습니다 — ' + backDef.join('·'), '');
   }
@@ -4362,7 +4370,7 @@ function destroyFaction(fid) {
   const f = G.factions[fid]; if (!f) return;
   log(f.name + ' 세력이 멸망했습니다.', 'bad');
   G.officers.filter(o => o.faction === fid).forEach(o => {
-    o.faction = 'free'; o.loyalty = 0; o.status = 'active';
+    o.faction = 'free'; o.loyalty = 0; o.status = 'active'; o.captivityMonths = 0;
   });
 }
 
@@ -4403,19 +4411,37 @@ function autoResolve(ctx, atkUnits, defUnits, defBonus) {
 }
 
 /* ── 등용 ────────────────────────────────────────────── */
+function canHireFrom(cityName, o) {
+  const c = G.cities[cityName];
+  if (!c || !o || isLeader(o.name)) return false;
+  if (o.city === cityName) return (o.faction === 'free' && o.status === 'active') || o.status === 'pow';
+  return c.links.includes(o.city) && o.status === 'active' && o.faction !== c.owner &&
+    (o.faction === 'free' || o.loyalty < ENEMY_HIRE_LOYALTY_LIMIT);
+}
 function hireChance(cityName, o, by) {
   const best = by || bestAvailable(cityName);
   const cha = best ? best.cha : 30, pol = best ? best.pol : 30;
-  let p = 0.18 + cha / 260 + pol / 480 + ((SKILLS[best ? best.skill : ''] || {}).recruit || 0);
-  if (o.status === 'pow') p += 0.15;
-  p -= (o.status === 'pow' ? o.loyalty * 0.4 : o.loyalty) / 380;
-  return cl(p, 0.05, 0.92);
+  const base = 0.18 + cha / 260 + pol / 480 + ((SKILLS[best ? best.skill : ''] || {}).recruit || 0);
+  const p = cl(base - o.loyalty / 380, 0.05, 0.92);
+  const honor = officerHonor(o), enemyChance = o.loyalty >= ENEMY_HIRE_LOYALTY_LIMIT ? 0 : p * 0.45 * (1 - honor * 0.0075);
+  if (o.status === 'pow') {
+    // 의리가 낮으면 3개월, 높으면 6개월에 걸쳐 재야(충성 0)의 확률로 접근한다.
+    const progress = cl((o.captivityMonths || 0) / (3 + honor * 0.03), 0, 1);
+    const freeChance = cl(base, 0.05, 0.92);
+    return progress >= 1 ? freeChance : enemyChance + (freeChance - enemyChance) * progress;
+  }
+  const enemy = o.status === 'active' && o.faction !== 'free' && o.faction !== G.cities[cityName].owner;
+  // 소속 세력을 떠나야 하는 현역 적장은 재야·포로보다 설득하기 어렵다.
+  if (enemy) return enemyChance;
+  const host = G.cities[o.city];
+  return o.status === 'active' && o.faction === 'free' && host && host.owner !== G.cities[cityName].owner
+    ? p * ENEMY_CITY_FREE_HIRE_RATE : p;
 }
 function cmdHire(cityName) {
   const c = G.cities[cityName]; if (!isPlayerCity(c)) return;
   if (!needCmd()) return;
-  const cands = G.officers.filter(o => o.city === cityName && ((o.faction === 'free' && o.status === 'active') || o.status === 'pow'));
-  if (!cands.length) { toast(cityName + '에 등용할 인재·포로가 없습니다'); return; }
+  const cands = G.officers.filter(o => canHireFrom(cityName, o));
+  if (!cands.length) { toast(cityName + ' 및 인접 도시에 등용할 무장이 없습니다'); return; }
   const best = bestAvailable(cityName);
   if (!best) { toast('이번 달 등용에 나설 무장이 없습니다'); return; }
   const rows = cands.slice().sort((a, b) =>
@@ -4425,25 +4451,28 @@ function cmdHire(cityName) {
   ).map(o => {
     const p = hireChance(cityName, o);
     const sk = SKILLS[o.skill];
-    return '<div class="row" role="button" tabindex="0" onclick="Game.doHire(\'' + o.name + '\')">' +
+    const affiliation = o.status === 'pow' ? '포로 ' + (o.captivityMonths || 0) + '개월' : o.faction === 'free' ? '재야' : (G.factions[o.faction] || {}).name || o.faction;
+    return '<div class="row" role="button" tabindex="0" onclick="Game.doHire(\'' + o.name + '\',\'' + cityName + '\')">' +
       '<span class="name">' + portraitHtml(o.name, 22) + o.name + '</span>' +
       '<span class="stats">무력 ' + o.wu + ' · 지력 ' + o.zhi + ' · 정치 ' + o.pol + ' · 매력 ' + o.cha + (sk ? ' · ' + o.skill : '') + '</span>' +
-      '<span class="right">' + (o.status === 'pow' ? '포로' : '재야') + ' · 성공률 ' + Math.round(p * 100) + '%</span></div>';
+      '<span class="right">' + o.city + ' · ' + affiliation + ' · 성공률 ' + Math.round(p * 100) + '%</span></div>';
   }).join('');
   showModal('<h3>등용 — ' + cityName + '</h3>' +
-    '<p class="muted">설득 담당: ' + (best ? best.name + ' (매력 ' + best.cha + ')' : '없음 — 성공률 저하') + ' · 명령권 1 소모</p>' +
+    '<p class="muted">설득 담당: ' + best.name + ' (매력 ' + best.cha + ') · 명령권 1 소모<br>현재 도시의 재야·포로와 인접 도시의 재야·적 무장(군주 제외)을 설득합니다. 적 소속 현역 무장은 충성도 85 미만만 대상에 표시됩니다. 적 도시의 재야는 아군 도시 대비 성공률 70%가 적용됩니다. 포로는 처음에는 적 무장과 같고, 억류 3~6개월에 걸쳐 점차 설득하기 쉬워집니다. 성공하면 ' + cityName + '(으)로 합류합니다.</p>' +
     rows + '<div class="foot"><button onclick="Game.closeModal()">닫기</button></div>');
 }
-function doHire(name) {
+function doHire(name, cityName) {
   const o = off(name); if (!o) return;
-  const cityName = o.city;
+  cityName = cityName || o.city;
+  if (!isPlayerCity(G.cities[cityName])) return;
+  if (!canHireFrom(cityName, o)) { toast('현재 등용할 수 없는 무장입니다'); return; }
   const best = bestAvailable(cityName);
   if (!best) { toast('이번 달 등용에 나설 무장이 없습니다'); return; }
   if (!spendCmd()) return;
   best.used = true;
   const p = hireChance(cityName, o, best);
   if (Math.random() < p) {
-    o.faction = G.pf; o.status = 'active'; o.loyalty = ri(60, 80);
+    o.faction = G.pf; o.status = 'active'; o.city = cityName; o.loyalty = ri(HIRED_LOYALTY_MIN, HIRED_LOYALTY_MAX); o.captivityMonths = 0;
     log(o.name + '을(를) 등용했습니다! (' + cityName + ')', 'good');
   } else {
     log(o.name + ' 등용에 실패했습니다. (성공률 ' + Math.round(p * 100) + '%)', 'bad');
@@ -5036,7 +5065,7 @@ function execAIAct(fid, a, cb) {
     const best=bestAvailable(a.cn);if(!best){cb();return;}
     const p=hireChance(a.cn,o,best);spend();best.used=true;
     if (Math.random() < p) {
-      o.faction = fid; o.status = 'active'; o.loyalty = ri(55, 75);
+      o.faction = fid; o.status = 'active'; o.loyalty = ri(HIRED_LOYALTY_MIN, HIRED_LOYALTY_MAX); o.captivityMonths = 0;
       log(f.name + '이(가) ' + o.name + '을(를) 등용했습니다.', '');
     }
     cb(); return;
@@ -5120,6 +5149,11 @@ function debutOfficers() {
 }
 
 /* ── 월간 정산 ───────────────────────────────────────── */
+function applyLoyaltyChange(o, delta) {
+  // 정수 충성도를 유지하면서 의리 100이면 감소 시도의 80%를 막는다.
+  if (delta < 0 && Math.random() < officerHonor(o) * 0.008) return;
+  o.loyalty = cl(o.loyalty + delta, 0, 100);
+}
 function monthlyProcess() {
   Object.keys(G.factions).forEach(fid => {
     const cs = factionCities(fid);
@@ -5163,14 +5197,15 @@ function monthlyProcess() {
 
   // 무장 충성도 · 이탈 (수장은 충성 100 고정)
   G.officers.forEach(o => {
-    if (o.faction === 'free') return;
     if (o.status === 'pow') {
-      if (o.loyalty > 0 && Math.random() < 0.35) o.loyalty = cl(o.loyalty - ri(0, 2), 0, 100);
+      o.captivityMonths = Math.min(120000, (o.captivityMonths || 0) + 1);
+      if (o.loyalty > 0 && Math.random() < 0.35) applyLoyaltyChange(o, -ri(0, 2));
       return;
     }
+    if (o.faction === 'free') return;
     if (o.status !== 'active') return;
     if (isLeader(o.name)) { o.loyalty = 100; return; }
-    if (o.loyalty < 100 && Math.random() < 0.5) o.loyalty = cl(o.loyalty + ri(-1, 1), 0, 100);
+    if (o.loyalty < 100 && Math.random() < 0.5) applyLoyaltyChange(o, ri(-1, 1));
     if (o.loyalty < 45 && Math.random() < 0.06) {
       if (o.faction === G.pf) log(o.name + '이(가) 불만을 품고 재야로 떠났습니다. (' + o.city + ')', 'bad');
       o.faction = 'free'; o.loyalty = 0;
@@ -5221,7 +5256,7 @@ function monthlyEvents() {
       const o = free[ri(0, free.length - 1)];
       o.faction = G.pf;
       o.city = cs[ri(0, cs.length - 1)];
-      o.loyalty = ri(60, 80);
+      o.loyalty = ri(HIRED_LOYALTY_MIN, HIRED_LOYALTY_MAX);
       log('인재 ' + o.name + '이(가) 투항해 왔습니다! (' + o.city + ')', 'good');
     }
   }
@@ -5353,7 +5388,7 @@ function officerBodyHtml(all) {
     const freeN = vis.filter(o => o.faction === 'free').length;
     const powN = vis.filter(o => o.status === 'pow').length;
     return '<p class="muted" style="margin:0 0 8px">소속 ' + (allList.length - freeN - powN) + ' · 재야 ' + freeN + ' · 포로 ' + powN +
-      ' — 위 정렬 버튼으로 열을 바꿀 수 있습니다. 재야·포로는 해당 도시에서 [등용]으로 설득합니다.</p>' +
+      ' — 위 정렬 버튼으로 열을 바꿀 수 있습니다. [등용]으로 현재 도시의 재야·포로와 인접 도시의 재야·적 무장(군주 제외)을 설득합니다.</p>' +
       '<div class="officer-table-scroll" role="region" aria-label="전체 무장 목록 · 좌우로 스크롤" tabindex="0"><table class="officer-table"><tr><th>이름</th><th>소속</th><th>도시</th><th>무력</th><th>지력</th><th>정치</th><th>매력</th><th>합계</th><th>특기</th><th>상태</th></tr>' +
       rows + '</table></div>';
   }
@@ -5427,9 +5462,9 @@ function openHelp() {
     '<p><b>군사</b> : 징병(1,000명당 금 80·치안 -5·신병 훈련 30/사기 55, <b>도시당 월 1회</b>) · 모병(1,000명당 금 160·치안 -1·신병 훈련 55/사기 75, 같은 달에 반복 가능). 충원·이동 시 기존 병력과 훈련·사기를 인원 비율로 합산합니다. 훈련(훈련도·사기↑) · 이동(아군 도시로, <b>무장 인원 제한 없음</b>, 출발 도시 병력 전부 이동 가능 — 목적지 인구 상한을 넘겨도 주둔 가능. 무장을 고르면 <b>목적지 후보 도시가 지도에 금색 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>. 지도 아래 띠의 [목록에서 선택]으로 목록 선택도 가능) · 출진(적 도시 공격 — 무장을 고르면 <b>목적지 후보 적 도시가 지도에 붉은 점선으로 표시되고, 지도에서 클릭해 목적지를 고를 수 있습니다</b>(지도 아래 띠의 [목록에서 선택]도 가능). 인접 아군 도시와 <b>합동 출진</b> → 전술 전투. 합류 도시 부대는 원군처럼 늦게 도착하고, 전투가 끝나면 무장·잔존 병력이 각자 출발 도시로 복귀).</p>' +
     '<p><b>전투</b> : 부대별로 이동/공격/계략(화계·혼란·고무)/일기토/진형을 사용합니다. <b>이동한 뒤에도 같은 턴에 공격할 수 있습니다.</b> 병과 상성(기병→궁병→보병→기병), 진형, 지형(숲·산·성)을 활용하세요. <b>기병은 부대당 한 전투에 2회 [돌격]</b>으로 최대 3칸까지 적 부대를 뚫고 반대편으로 빠져나올 수 있지만 <b>출발점·경로·착지점이 모두 평지여야 하며 숲·산·성·물·여울에서는 돌격할 수 없습니다.</b>  <b>보병은 같은 적에 인접한 보병·기병과 2부대 이상으로 [일제공격]</b>하여 함께 공격합니다(반격 없음, 명령은 보병이 시작). <b>보병은 한 전투에 일제공격을 2회까지 시작·참여</b>할 수 있으며, 참여할 때마다 1회씩 소모합니다. <b>기병은 참여 횟수 제한이 없으며</b>, 참여할 때 해당 턴의 행동을 소모합니다. <b>궁병은 [불화살]</b>로 적을 불태워 2라운드간 화상 피해를 남길 수 있고(부대당 2회, 숲에서 1.5배), <b>궁병이 아닌 부대가 근접 공격하면 상대의 반격</b>으로 아군도 피해를 입습니다. <b>성에서 공격하면 받는 반격 피해가 지형 방어에 더해 25% 줄어듭니다.</b> 전투 중에는 인접 아군 도시에서 <b>원군</b>을 보낼 수 있고, 원군은 행군에 며칠이 걸려 도착합니다(진군 상황은 전장 위쪽 상태바에 표시). <b>적도 병력이 불리해지면 원군을 보내므로</b> 상태바의 적 원군 표시를 확인하세요. <b>수비 편성 중 미리 요청한 원군은 플레이어·AI 모두 2라운드 뒤 도착</b>합니다. 적이 우리 성을 공격하면 전투 전에 <b>수비 편성</b> 창이 열려 출진처럼 무장·병과·진형·병력을 직접 지정할 수 있습니다(창을 닫으면 자동 편성). <b>AI도 매 라운드 상황에 맞춰 진형을 바꿉니다</b>(성 수비=방원, 궁병=학익, 기병=봉시, 보병=거리별 방원·안행·어린). 진형 전환은 <b>부대마다 첫 1회가 행동을 소모하지 않습니다</b>(이후 전환은 행동 소모, AI도 동일). 전투는 최대 <b>15라운드</b>입니다. <b>최대 라운드가 끝나면 공격군이 자동으로 후퇴하고 방어군이 승리합니다.</b> 공성전에서 <b>세 성의 깃발이 모두 공격군으로 바뀌면 방어측 패배</b>입니다. <b>수비측은 후퇴할 인접 아군 도시가 있으면 [후퇴]</b>로 성을 내주고 잔존 병력의 80%를 이끌고 빠져나갈 수 있습니다(무장도 함께 이동). <b>수비 편성 창에서도 [후퇴]</b>를 눌러 싸우지 않고 성을 내주고 빠져나갈 수 있습니다(편성 중 요청한 원군은 취소되어 출발 도시로 돌아갑니다). <b>[다음 턴]</b> 버튼으로 남은 부대를 대기시키고 턴을 넘길 수 있습니다.</p>' +
     '<p><b>병력과 회복</b> : 현재 병력이 많을수록 공격·반격이 강해지며, 3,000명을 넘는 대부대는 증가폭이 완만해집니다. 1,000명 미만 부대는 사기·화상 효과와 적 계략 성공률이 낮고, 화계 피해도 병력에 비례해 줄어듭니다. 일기토 신청은 부대당 전투 중 1회입니다. <b>일기토를 신청받으면 양측 무장의 이름·무력·사기·병력을 확인하고 수락하거나 거부</b>할 수 있습니다. <b>거부하면 병력 손실 없이 패배 시의 2배만큼 사기가 감소</b>합니다(기본 50, 신청 부대가 1,000명 미만이면 병력에 비례해 감소). 사기가 0이 되면 병력을 보존한 채 전장에서 도주합니다. 거부당해도 신청한 부대의 행동과 신청 기회는 소모됩니다. 자동 진행과 AI는 승산과 남은 사기에 따라 응답합니다. 고무는 반드시 성공하며, 훈련도가 100이어도 [훈련]으로 사기를 회복할 수 있습니다.</p>' +
-    '<p><b>인사</b> : 등용(재야·포로 설득) · 포상(금 100, 충성도↑). 충성도가 45 미만이면 배신할 수 있습니다. 세력 수장(★)은 충성 100으로 배신·포로가 없습니다.</p>' +
+    '<p><b>인사</b> : 등용(현재 도시의 재야·포로 및 인접 도시의 재야·적 무장 설득, 성공 시 명령 도시로 합류) · 포상(금 100, 충성도↑). 충성도가 45 미만이면 배신할 수 있습니다. 세력 수장(★)은 충성 100으로 등용·배신·포로가 없습니다.</p>' +
     '<p><b>시기별 등장</b> : 194년 이후 인물(제갈량·사마의·강유 등)은 <b>역사적 등장 시기</b>에 맞춰 해당 지역에 나타납니다. 등장한 달에는 전황 기록에 알림이 뜨고, 그 도시를 지배하는 세력이 있으면 곧바로 합류하며, 아니면 재야로 남아 [등용]으로 설득할 수 있습니다. 아직 등장하지 않은 인물은 무장 일람에 표시되지 않습니다.</p>' +
-    '<p><b>포로</b> : 전투에서 사로잡은 무장은 해당 도시에 머물며, 그 도시를 원래 세력이 되찾으면 자동으로 풀려납니다.</p>' +
+    '<p><b>포로</b> : 전투에서 사로잡은 무장은 해당 도시에 머물며, 그 도시를 원래 세력이 되찾으면 자동으로 풀려납니다. 등용 성공률은 처음에는 적 소속일 때와 같고, 억류 기간에 따라 점차 높아져 보통 3~6개월이면 재야 무장과 비슷해집니다.</p>' +
     '<p><b>외교</b> : 동맹은 12개월, 휴전은 6개월입니다. 공동 출진은 동맹국에 3개월 동안 특정 도시 공격을 우선 검토하도록 요청합니다. 상대가 3도시 이하이고 병력·도시가 각각 4배 우세하면 항복 권고가 가능하며 종속 세력의 영토를 편입할 수 있습니다. AI도 공동의 적과 보급 사정에 따라 동맹·휴전을 선택합니다. 선물로 관계를 올리고 동맹을 맺으면 서로 공격하지 않습니다. 동맹국 도시는 별도로 표시되며, 수비 편성·전투 중 원군 목록에서 전장에 인접한 동맹국 도시에 원군을 요청할 수 있습니다(도시별 전투당 1회). 동맹국이 주둔 병력·미행동 무장·훈련·사기·군량·주변 위협·관계를 보고 승낙 여부와 파견 규모를 정하며, 교전 상대와도 동맹이면 참전하지 않습니다. 지원 부대는 전투 후 출발 도시로 복귀합니다(패전·포로 손실 적용).</p>' +
     '<p><b>사운드</b> : 상단바의 <b>♪</b>(배경음악) · <b>🔊</b>(효과음) 버튼 또는 <b>M</b> · <b>N</b> 키로 언제든 켜고 끌 수 있습니다. 설정은 브라우저에 저장되어 다음 실행에도 유지됩니다.</p>' +
     '<p class="muted">저장은 브라우저(localStorage)에 됩니다. [저장]에서 수동저장 슬롯 3개 중 원하는 위치를 고를 수 있습니다. 매달 자동저장은 별도 슬롯 3개에 최근 순으로 보관되며 수동저장을 덮어쓰지 않습니다. [불러오기]에서 수동저장 또는 자동저장을 골라 이어 할 수 있습니다. ESC로 창을 닫을 수 있습니다.</p>' +

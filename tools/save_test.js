@@ -117,4 +117,33 @@ assert.equal(store[key(1)], legacy, 'single legacy save must migrate to auto slo
 assert(!store[key(1, 'manual')]);
 Game.loadGame(1);
 assert.equal(Game.state.turn, JSON.parse(legacy).turn);
+// Hidden honor survives real slots and JSON imports; old saves acquire stable defaults.
+Game.startNew('cao','194');
+const honored=Game.state.officers.find(o=>o.name==='하후돈');honored.honor=13;honored.loyalty=67;
+const prisoner=Game.state.officers.find(o=>o.name==='안량');prisoner.status='pow';prisoner.city='허창';prisoner.captivityMonths=4;
+Game.saveGame(false,1);Game.startNew('liubei','219');Game.loadGame(1,'manual');
+assert.equal(Game.state.officers.find(o=>o.name==='하후돈').honor,95,'canonical officers use historical values even if an older save stored a generated value');
+assert.equal(Game.state.officers.find(o=>o.name==='하후돈').loyalty,67);
+assert.equal(Game.state.officers.find(o=>o.name==='안량').captivityMonths,4);
+const json=JSON.stringify(Game.state);
+assert.equal(Game._debug.parseSaveFile(json).officers.find(o=>o.name==='하후돈').honor,95);
+const generatedHonorSave=JSON.parse(json);generatedHonorSave.ver=6;generatedHonorSave.officers.find(o=>o.name==='하후돈').honor=13;
+assert.equal(Game._debug.parseSaveFile(JSON.stringify(generatedHonorSave)).officers.find(o=>o.name==='하후돈').honor,95);
+assert.equal(Game._debug.parseSaveFile(json).officers.find(o=>o.name==='안량').captivityMonths,4);
+const old=JSON.parse(json);old.ver=5;old.officers.forEach(o=>{delete o.honor;delete o.captivityMonths;});
+const migrated=Game._debug.parseSaveFile(JSON.stringify(old)),again=Game._debug.parseSaveFile(JSON.stringify(old));
+assert(migrated.officers.every(o=>Number.isInteger(o.honor)&&o.honor>=0&&o.honor<=100));
+assert.deepEqual(migrated.officers.map(o=>o.honor),again.officers.map(o=>o.honor));
+assert.equal(migrated.officers.find(o=>o.name==='하후돈').loyalty,67);
+assert.equal(migrated.officers.find(o=>o.name==='안량').captivityMonths,0);
+store[key(2,'manual')]=JSON.stringify(old);Game.loadGame(2,'manual');
+assert.deepEqual(Game.state.officers.map(o=>o.honor),migrated.officers.map(o=>o.honor));
+for (const invalid of [-1,101,1.5,null,'50']) {
+  const broken=JSON.parse(json);broken.officers[0].honor=invalid;
+  assert.throws(()=>Game._debug.parseSaveFile(JSON.stringify(broken)),/의리/);
+}
+for (const invalid of [-1,120001,1.5,null,'3']) {
+  const broken=JSON.parse(json);broken.officers.find(o=>o.name==='안량').captivityMonths=invalid;
+  assert.throws(()=>Game._debug.parseSaveFile(JSON.stringify(broken)),/억류/);
+}
 console.log('[OK] manual slot selection/cancel/overwrite, independent three-slot autosave rotation, load/title lists, guards/failure, old save compatibility');

@@ -41,6 +41,12 @@ function validateSave(data) {
     names.add(o.name);
     for(const k of ['wu','zhi','pol','cha'])if(!finite(o[k],0,100))throw Error('무장 능력치가 잘못되었습니다');
     if(!finite(o.loyalty,0,100)||(o.skill&&!SKILLS[o.skill]))throw Error('무장 특기 또는 충성이 잘못되었습니다');
+    if(o.honor===undefined) o.honor=defaultOfficerHonor(o.name);
+    if(!finite(o.honor,0,100)||!Number.isInteger(o.honor))throw Error('무장 의리가 잘못되었습니다');
+    if(o.custom!==true) o.honor=defaultOfficerHonor(o.name); // 이전 자동 산출값도 역사별 고정값으로 갱신.
+    if(o.captivityMonths===undefined) o.captivityMonths=0;
+    if(!finite(o.captivityMonths,0,120000)||!Number.isInteger(o.captivityMonths))throw Error('포로 억류 기간이 잘못되었습니다');
+    if(o.status!=='pow') o.captivityMonths=0;
   }
   if(!finite(data.cmd??0,0,100)||!finite(data.cmdMax??32,0,100))throw Error('명령권이 잘못되었습니다');
   // 이전 파일에 저장된 HTML·UI 콜백·로그를 그대로 렌더링하지 않는다.
