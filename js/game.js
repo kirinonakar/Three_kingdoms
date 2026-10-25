@@ -349,7 +349,7 @@ function portraitAttr(name) {
   const src = PORTRAITS[name];
   return src ? ' data-portrait="' + src + '" data-name="' + name + '"' : '';
 }
-/* 초상화 툴팁 — [data-portrait] 를 가진 요소(배지·표 행·태그) 위에서 뜬다 */
+/* 초상화 툴팁 — 배지·이름에 마우스를 올리거나 터치하면 뜬다 */
 const PF_TIP_SEL = '[data-portrait]';
 /* 이름이 적힌 카드(.otag·.row·표 행·전장 툴팁) 안에 초상화 배지가 있으면
    그 카드의 어디를 가리켜도 같은 초상화를 툴팁으로 띄운다. */
@@ -386,25 +386,53 @@ function hidePortraitTip() {
   const tip = $('pfTip'); if (tip) tip.hidden = true;
 }
 function bindPortraitTip() {
+  let touch = null;
+  const dismiss = () => { touch = null; hidePortraitTip(); };
+  document.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch') return;
+    const host = portraitHost(e.target);
+    if (!host || e.isPrimary === false) { dismiss(); return; }
+    const tip = $('pfTip'), src = host.getAttribute('data-portrait');
+    touch = { id:e.pointerId, x:e.clientX, y:e.clientY, src,
+      close:!!tip && !tip.hidden && tip.getAttribute('data-src') === src };
+  });
+  document.addEventListener('pointerup', e => {
+    if (e.pointerType !== 'touch' || !touch || touch.id !== e.pointerId) return;
+    const tap = touch; touch = null;
+    const host = portraitHost(e.target);
+    if (!host || host.getAttribute('data-portrait') !== tap.src ||
+        Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 10) { hidePortraitTip(); return; }
+    if (tap.close) hidePortraitTip();
+    else showPortraitTip(host, e.clientX, e.clientY);
+  });
+  document.addEventListener('pointercancel', e => {
+    if (e.pointerType === 'touch') dismiss();
+  });
   document.addEventListener('pointerover', e => {
-    if (e.pointerType === 'touch') { hidePortraitTip(); return; }
+    if (e.pointerType === 'touch') return;
     const el = portraitHost(e.target);
     if (el) showPortraitTip(el, e.clientX, e.clientY);
   });
   document.addEventListener('pointermove', e => {
-    if (e.pointerType === 'touch') return;
+    if (e.pointerType === 'touch') {
+      if (touch && touch.id === e.pointerId && Math.hypot(e.clientX - touch.x, e.clientY - touch.y) > 10) dismiss();
+      return;
+    }
     const tip = $('pfTip'); if (!tip || tip.hidden) return;
     if (portraitHost(e.target)) movePortraitTip(e.clientX, e.clientY); else hidePortraitTip();
   });
   document.addEventListener('pointerout', e => {
+    if (e.pointerType === 'touch') return; // 손을 뗀 직후의 pointerout으로 사진이 닫히지 않게 한다.
     const host = portraitHost(e.target); if (!host) return;
     const to = portraitHost(e.relatedTarget);
     // 같은 초상화(행 → 배지, 배지 → 행)로 움직인 것이면 툴팁을 유지한다
     if (to && to.getAttribute('data-portrait') === host.getAttribute('data-portrait')) return;
     hidePortraitTip();
   });
-  window.addEventListener('scroll', hidePortraitTip, true);
-  window.addEventListener('blur', hidePortraitTip);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') dismiss(); });
+  window.addEventListener('scroll', dismiss, true);
+  window.addEventListener('blur', dismiss);
+  window.addEventListener('resize', dismiss);
 }
 let G = null;              // 게임 상태
 let chosenScenario = '194';
@@ -787,7 +815,7 @@ function boot() {
   });
   if (typeof Sound !== 'undefined') Sound.boot();     // 설정 복원 + 첫 입력에서 오디오 활성화
   bindSfx();                                          // 버튼·목록 클릭 효과음
-  bindPortraitTip();                                  // 무장 초상화 호버 툴팁
+  bindPortraitTip();                                  // 무장 초상화 호버·터치 미리보기
   migrateLegacySave();                                // 구버전 단일 저장을 슬롯으로 옮긴다
   if (typeof ResizeObserver !== 'undefined') {
     new ResizeObserver(() => { if (G) drawMap(); }).observe(cvM);
@@ -2461,7 +2489,7 @@ function renderCityPanel() {
     '<h3>' + c.name + '</h3><span class="fac-chip">' + (f ? f.name : '재야') + '</span><span class="fac-chip" title="인구 9만 미만: 소 · 9만 이상: 중 · 14만 이상: 대">' + citySize(c).label + '</span></div>' +
     '<span class="badge ' + (mine ? 'mine' : ally ? 'ally' : 'foe') + '">' + (!G.pf ? 'AI 운영 도시' : mine ? '내 도시' : ally ? '동맹국 도시' : '적 도시') + '</span></div>';
   /* 좌측 열: 도시 현황 */
-  let colA = '<p class="muted">'+objectiveStatus().label+'</p><p class="muted">위임: '+(!G.pf || G.fullDelegation ? '전체위임 · AI 운영' : CITY_POLICIES[c.policy]||CITY_POLICIES.manual)+'</p><div class="cmdline"><span>명령권</span><b>' + G.cmd + ' / ' + G.cmdMax + '</b></div>';
+  let colA = '<div class="city-management"><p class="muted">'+objectiveStatus().label+'</p><p class="muted">위임: '+(!G.pf || G.fullDelegation ? '전체위임 · AI 운영' : CITY_POLICIES[c.policy]||CITY_POLICIES.manual)+'</p></div><div class="cmdline"><span>명령권</span><b>' + G.cmd + ' / ' + G.cmdMax + '</b></div>';
   colA += '<div class="statlist">' + [['agri', '농업'], ['comm', '상업'], ['def', '방어'], ['order', '치안']].map(([k, label]) =>
     '<div class="srow"><span class="k">' + label + '</span><div class="bar"><i class="barfill ' + k + '" style="width:' + c[k] + '%"></i></div><b class="v">' + c[k] + '</b></div>'
   ).join('') + '</div>';
