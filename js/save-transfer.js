@@ -29,9 +29,15 @@ function validateSave(data) {
     if(f.vassalTo&&!fids.has(f.vassalTo))throw Error('종속 세력이 잘못되었습니다');
   }
   const known=new Set(OFFICER_DEFS.map(o=>o[0])),names=new Set();
-  if(data.officers.length>OFFICER_DEFS.length)throw Error('무장 목록이 잘못되었습니다');
+  const custom = typeof CustomOfficers !== 'undefined' ? CustomOfficers : null;
+  if(data.officers.length>OFFICER_DEFS.length+(custom ? custom.MAX : 0))throw Error('무장 목록이 잘못되었습니다');
+  let customCount=0;
   for(const o of data.officers) {
-    if(!o||!known.has(o.name)||names.has(o.name)||!canonical.has(o.city)||(!fids.has(o.faction)&&o.faction!=='free')||!['active','pow','hidden','retired'].includes(o.status||'active'))throw Error('무장 정보가 잘못되었습니다');
+    if(!o||(!known.has(o.name)&&o.custom!==true)||names.has(o.name)||!canonical.has(o.city)||(!fids.has(o.faction)&&o.faction!=='free')||!['active','pow','hidden','retired'].includes(o.status||'active'))throw Error('무장 정보가 잘못되었습니다');
+    if(o.custom===true) {
+      if(!custom || ++customCount>custom.MAX)throw Error('신무장 목록이 잘못되었습니다');
+      custom.validate({...o,ruler:false});
+    } else if(o.portrait!==undefined) delete o.portrait;
     names.add(o.name);
     for(const k of ['wu','zhi','pol','cha'])if(!finite(o[k],0,100))throw Error('무장 능력치가 잘못되었습니다');
     if(!finite(o.loyalty,0,100)||(o.skill&&!SKILLS[o.skill]))throw Error('무장 특기 또는 충성이 잘못되었습니다');
@@ -39,7 +45,19 @@ function validateSave(data) {
   if(!finite(data.cmd??0,0,100)||!finite(data.cmdMax??32,0,100))throw Error('명령권이 잘못되었습니다');
   // 이전 파일에 저장된 HTML·UI 콜백·로그를 그대로 렌더링하지 않는다.
   data.ui={};data.battleCtx=null;data.log=Array.isArray(data.log)?data.log.filter(l=>l&&typeof l.m==='string').slice(-120).map(l=>({m:l.m.slice(0,2000),c:['good','bad','war','sep'].includes(l.c)?l.c:''})):[];
-  data.leaders={...LEADERS,...scenario.leaders};
+  const leaders={...LEADERS,...scenario.leaders};
+  if(data.leaders!==undefined) {
+    if(!data.leaders||typeof data.leaders!=='object'||Array.isArray(data.leaders))throw Error('군주 정보가 잘못되었습니다');
+    for(const [fid,name] of Object.entries(data.leaders)) {
+      if(!fids.has(fid)||typeof name!=='string')throw Error('군주 정보가 잘못되었습니다');
+      if(name===leaders[fid])continue;
+      const alive=Object.values(data.cities).some(c=>c.owner===fid);
+      const chief=data.officers.find(o=>o.name===name&&o.custom===true&&(!alive||(o.faction===fid&&o.status==='active'&&o.loyalty===100)));
+      if(!chief)throw Error('신무장 군주 정보가 잘못되었습니다');
+      leaders[fid]=name;data.factions[fid].name=name;
+    }
+  }
+  data.leaders=leaders;
   if(data.goal) {
     if(!['unification','hegemony','challenge','scenario'].includes(data.goal.type))throw Error('승리 목표가 잘못되었습니다');
     if(data.goal.targets&&(!Array.isArray(data.goal.targets)||data.goal.targets.some(n=>!canonical.has(n))))throw Error('목표 도시가 잘못되었습니다');

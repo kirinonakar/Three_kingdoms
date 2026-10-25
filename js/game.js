@@ -4,7 +4,7 @@
 'use strict';
 const SAVE_KEY = 'sangokji_save_v1';        // 구버전 단일 슬롯 — 자동저장 슬롯 1로 옮긴다
 const SAVE_SLOTS = 3;                       // 수동 3개 + 자동 3개를 별도로 보관한다
-const SAVE_VERSION = 4;
+const SAVE_VERSION = 5;
 const saveSlotKey = (n, kind = 'auto') => SAVE_KEY + (kind === 'manual' ? '_manual_slot' : '_slot') + n;
 const saveMetaKey = (n, kind = 'auto') => SAVE_KEY + (kind === 'manual' ? '_manual_meta' : '_meta') + n;
 const GRACE_TURNS = 2;      // 초반 2개월은 AI가 플레이어 도시를 공격하지 않는다
@@ -384,22 +384,31 @@ const PORTRAITS = {
   '환초': 'assets/portraits/huanchu.jpg',
   '장양': 'assets/portraits/zhangyang.jpg'
 };
+function portraitSource(name) {
+  const titleMode = !!(document.body && document.body.classList.contains('title'));
+  if (titleMode && typeof CustomOfficers !== 'undefined') {
+    const profile = CustomOfficers.entries().find(o => o.name === name);
+    if (profile) return profile.portrait;
+  }
+  const officer = G && G.officers.find(o => o.name === name && o.custom);
+  return (officer && officer.portrait) || PORTRAITS[name] || '';
+}
 function portraitHtml(name, size) {
   const sz = 'pf s' + (size || 22);
   const initial = name ? name.charAt(0) : '?';
-  const src = PORTRAITS[name];
+  const src = portraitSource(name);
   const head = '<span class="' + sz + (src ? ' face' : '') + '" data-name="' + name + '"' +
     (src ? ' data-portrait="' + src + '"' : '') + ' aria-hidden="true">';
   return head + '<i>' + initial + '</i></span>';
 }
 /* 초상화 원본 그림 — 전장 부대 툴팁처럼 사진을 직접 보여 줄 때 쓴다 (없으면 빈 문자열) */
 function portraitFace(name) {
-  const src = PORTRAITS[name];
+  const src = portraitSource(name);
   return src ? '<span class="ut-face"><img src="' + src + '" alt="' + name + '"></span>' : '';
 }
 /* 이름에 얼굴 그림이 있으면 지정 크기로 그려 준다 — 타이틀 세력 카드처럼 크게 보여 줄 때 (없으면 빈 문자열) */
 function portraitPhoto(name, px) {
-  const src = PORTRAITS[name];
+  const src = portraitSource(name);
   if (!src) return '';
   const d = Math.round(px || 46);
   return '<span class="pf-photo" style="width:' + d + 'px;height:' + d + 'px">' +
@@ -408,7 +417,7 @@ function portraitPhoto(name, px) {
 /* 배지뿐 아니라 무장 태그·표의 행 전체를 호버 대상으로 만드는 속성.
    초상화가 없는 무장은 빈 문자열이라 아무 일도 일어나지 않는다. */
 function portraitAttr(name) {
-  const src = PORTRAITS[name];
+  const src = portraitSource(name);
   return src ? ' data-portrait="' + src + '" data-name="' + name + '"' : '';
 }
 /* 초상화 툴팁 — 배지·이름에 마우스를 올리거나 터치하면 뜬다 */
@@ -427,9 +436,27 @@ function showPortraitTip(el, x, y) {
   const tip = $('pfTip'); if (!tip) return;
   const src = el.getAttribute('data-portrait'); if (!src) return;
   const name = el.getAttribute('data-name') || '';
-  if (tip.getAttribute('data-src') !== src) {
-    tip.innerHTML = '<img src="' + src + '" alt="' + name + '"><span>' + name + '</span>';
-    tip.setAttribute('data-src', src);       // 같은 그림은 다시 만들지 않는다
+  const def = OFFICER_DEFS.find(o => o[0] === name);
+  const titleProfile = document.body && document.body.classList.contains('title') && typeof CustomOfficers !== 'undefined' && CustomOfficers.entries().find(o => o.name === name);
+  const officer = titleProfile || (G && G.officers.find(o => o.name === name)) ||
+    (def && { name, wu:def[3], zhi:def[4], pol:def[5], cha:def[6], skill:def[7] });
+  let content = '<img src="' + src + '" alt="' + name + '"><div class="pf-name">' + name + '</div>';
+  if (officer) {
+    content += '<div class="pf-stats">' + [['무력','wu'],['지력','zhi'],['정치','pol'],['매력','cha']].map(([label,key]) =>
+      '<div><span>' + label + '</span><b>' + officer[key] + '</b></div>').join('') + '</div>';
+    const skill = SKILLS[officer.skill], combat = CombatRules.description(officer);
+    if (skill) content += '<p class="pf-detail">' + officer.skill + ': ' + skill.desc + '</p>';
+    if (combat) content += '<p class="pf-detail">' + combat + '</p>';
+    const faction = G && G.factions[officer.faction];
+    const status = officer.status === 'pow' ? (faction ? faction.name + ' 소속 ' : '') + '포로' :
+      officer.faction === 'free' ? '재야 무장' : '';
+    if (status || officer.used) content += '<p class="pf-detail">' +
+      [status, officer.used ? '이번 달 명령 완료' : ''].filter(Boolean).join(' · ') + '</p>';
+  }
+  if (tip.getAttribute('data-content') !== content) {
+    tip.innerHTML = content;
+    tip.setAttribute('data-content', content);
+    tip.setAttribute('data-src', src);
   }
   tip.hidden = false;
   movePortraitTip(x, y);
@@ -679,6 +706,7 @@ function newGame(pf, scenarioId = '194') {
   };
   if(scenario.rosters) assignScenarioRosters(scenario);      // 15군웅처럼 편성표를 직접 지정한 시나리오
   else if(scenario.owners) distributeScenarioOfficers(scenario);
+  if (typeof CustomOfficers !== 'undefined') CustomOfficers.applyNewGame(G);
   // 시작 비축은 실제 주둔군의 6개월 소비량. 후대 대세력에도 같은 기준을 쓴다.
   Object.values(factions).forEach(f => {
     const upkeep = factionCities(f.id).reduce((s, n) => s + cityFoodUpkeep(cities[n]), 0);
@@ -1011,17 +1039,19 @@ function startScreen() {
   setTitleMode(true);
   bgm('title');                       // 시작 화면 — 차분한 주제곡
   const scenario = scenarioById(chosenScenario), cities = scenarioCities(scenario);
+  const customs = typeof CustomOfficers !== 'undefined' ? CustomOfficers.entries() : [];
   const roster = OFFICER_DEFS.map(o=>scenarioOfficer(o,scenario,cities)).filter(o=>!o.retired && (o.def[8]||194)<=scenario.year);
   const rows = scenarioFactions(scenario).filter(f=>cities.some(c=>c[4]===f[0])).map(f => {
     const id = f[0];
-    const cs = cities.filter(c => c[4] === id), name=scenario.names && scenario.names[id] || f[1];
+    const customRuler = customs.filter(o => o.ruler && cities.some(c => c[0] === o.city && c[4] === id)).slice(-1)[0];
+    const cs = cities.filter(c => c[4] === id), name=customRuler ? customRuler.name : scenario.names && scenario.names[id] || f[1];
     const troops = cs.reduce((s, c) => s + c[10], 0);
-    const offs = roster.filter(o => o.def[1] === id).length;
+    const offs = roster.filter(o => o.def[1] === id).length + customs.filter(o => cities.some(c => c[0] === o.city && c[4] === id)).length;
     const d = (scenario.difficulty && scenario.difficulty[id]) || DIFFICULTY[id] || 1;
     const stars = '★'.repeat(d) + '☆'.repeat(5 - d);
     /* 세력 카드에는 세력 색 점만 두고, 수장 얼굴은 카드에 마우스를 올렸을 때 툴팁으로 띄운다.
        시나리오에서 수장이 바뀌면(예: 손책→손권) 그쪽을 우선한다. */
-    const chief = (scenario.leaders && scenario.leaders[id]) || LEADERS[id] || name;
+    const chief = customRuler ? customRuler.name : (scenario.leaders && scenario.leaders[id]) || LEADERS[id] || name;
     return '<div class="frow"' + portraitAttr(chief) + ' role="button" tabindex="0" aria-label="' + name + ' 세력으로 시작" data-faction="' + id + '" onclick="Game.startNew(\'' + id + '\',\'' + scenario.id + '\')">' +
       '<span class="dot" style="background:' + f[2] + '"></span>' +
       '<b style="width:64px">' + name + '</b>' +
@@ -1035,7 +1065,7 @@ function startScreen() {
     startSaveRows() +
     '<button class="frow" onclick="Game.startSpectator(\'' + scenario.id + '\')"><b>전체 AI 관전</b><span class="muted">세력 선택 없이 모든 세력을 AI에 맡깁니다</span></button>' +
     rows +
-    '<div class="foot"><button onclick="Game.openHelp()">게임 방법</button></div>', { closable: false });
+    '<div class="foot"><button onclick="CustomOfficers.open(true)">신무장 등록</button><button onclick="Game.openHelp()">게임 방법</button></div>', { closable: false });
 }
 function chooseScenario(id) { chosenScenario=scenarioById(id).id;startScreen(); }
 
@@ -1066,7 +1096,7 @@ function renderTop() {
   $('cmdInfo').textContent = G.cmd + ' / ' + G.cmdMax;
   $('cityInfo').textContent = factionCities(G.pf).length + ' / ' + Object.keys(G.cities).length;
   const busy = !!G.aiRunning || !!attackIntro;
-  ['btnSave', 'btnLoad', 'btnOfficers', 'btnDiplo', 'btnPolicies'].forEach(id => { const el = $(id); if (el) el.disabled = busy; });
+  ['btnSave', 'btnLoad', 'btnOfficers', 'btnCustomOfficers', 'btnDiplo', 'btnPolicies'].forEach(id => { const el = $(id); if (el) el.disabled = busy; });
   if ($('btnDiplo')) $('btnDiplo').disabled = busy || !G.pf || G.fullDelegation;
   if ($('btnOfficers')) $('btnOfficers').disabled = busy && !G.autoPaused;
   const auto = $('btnAutoPlay');
@@ -2538,7 +2568,7 @@ function renderCityPanel() {
     return;
   }
   const c = G.cities[G.sel], f = G.factions[c.owner];
-  const offs = officersIn(c.name);
+  const offs = officersIn(c.name).sort((a, b) => Number(isLeader(b.name)) - Number(isLeader(a.name)));
   const avail = offs.filter(o => !o.used).length;
   // 재야·포로 무장은 주둔 무장과 별도로 표시한다 (등용 후보)
   const frees = freeOfficersIn(c.name);
@@ -2579,16 +2609,14 @@ function renderCityPanel() {
   }
   /* 우측 열: 무장 · 인접 도시 · 경고 */
   let colB = '<div class="sec"><span>주둔 무장</span><b>' + offs.length + '명' + (avail < offs.length ? ' · 가용 ' + avail : '') + '</b></div><div class="otags">' +
-    (offs.map(o => '<span class="otag' + (o.used ? ' used' : '') + '" title="무력 ' + o.wu + ' · 지력 ' + o.zhi + ' · 정치 ' + o.pol + ' · 매력 ' + o.cha +
-      (SKILLS[o.skill] ? ' · ' + o.skill + ': ' + SKILLS[o.skill].desc : '') + (CombatRules.description(o)?' · '+CombatRules.description(o):'') + (o.used ? ' · 이번 달 명령 완료' : '') + '">' + portraitHtml(o.name, 16) + o.name +
+    (offs.map(o => '<span class="otag' + (isLeader(o.name) ? ' leader' : '') + (o.used ? ' used' : '') + '">' + portraitHtml(o.name, 16) + o.name +
+      (isLeader(o.name) ? '<i class="leader-mark">군주</i>' : '') +
       (o.used ? '<i class="sk">완료</i>' : (o.skill ? '<i class="sk">' + o.skill + '</i>' : '')) + '</span>').join('') || '<span class="muted">없음</span>') +
   '</div>';
   /* 재야 · 포로 무장 — 등용 후보 */
   const otherTag = (o, cls) => {
-    const sk = SKILLS[o.skill], of = cls === 'pow' ? G.factions[o.faction] : null;
-    return '<span class="otag ' + cls + '" title="' + (of ? of.name + ' 소속 포로' : '재야 무장') +
-      ' · 무력 ' + o.wu + ' · 지력 ' + o.zhi + ' · 정치 ' + o.pol + ' · 매력 ' + o.cha +
-      (sk ? ' · ' + o.skill + ': ' + sk.desc : '') + '">' + portraitHtml(o.name, 16) + o.name +
+    const of = cls === 'pow' ? G.factions[o.faction] : null;
+    return '<span class="otag ' + cls + '">' + portraitHtml(o.name, 16) + o.name +
       '<i class="sk">' + (of ? '포로' : '재야') + '</i></span>';
   };
   colB += '<div class="sec"><span>재야 무장</span><b>' + frees.length + '명</b></div><div class="otags">' +
@@ -4503,6 +4531,7 @@ function diploBreak(id) {
 function startNew(fid, scenarioId = chosenScenario) {
   const scenario = scenarioById(scenarioId);
   if (!scenarioCities(scenario).some(c=>c[4]===fid)) { toast('이 시나리오에는 해당 세력이 없습니다'); return; }
+  if (typeof CustomOfficers !== 'undefined' && !CustomOfficers.checkNewGame(scenario)) return;
   closeModal();
   setTitleMode(false);
   bgm('map');                          // 세력 운영 — 지도 배경음악
@@ -4516,6 +4545,7 @@ function startNew(fid, scenarioId = chosenScenario) {
 }
 function startSpectator(scenarioId = chosenScenario) {
   const scenario = scenarioById(scenarioId);
+  if (typeof CustomOfficers !== 'undefined' && !CustomOfficers.checkNewGame(scenario)) return;
   closeModal(); setTitleMode(false); bgm('map'); sfx('success');
   chosenScenario = scenario.id;
   newGame(null, scenario.id);
@@ -5360,6 +5390,7 @@ function openOfficers(all) {
 /* ── 도움말 ──────────────────────────────────────────── */
 function openHelp() {
   showModal('<h3>게임 방법 — 삼국지 : 천하통일</h3>' +
+    '<p><b>신무장</b> : 시작 화면이나 상단 [신무장]에서 이름·능력치·특기·사진·도시와 군주 교체를 설정합니다. 등록부는 모든 새 게임에 반영됩니다. 진행 중인 게임에는 [배치]로 적용하고 게임도 저장하세요. 신무장 JSON은 사진을 포함하며, 전체 게임 저장 JSON에도 배치한 무장과 군주가 유지됩니다.</p>' +
     '<p><b>파일 이전</b> : [저장]의 JSON 내보내기, [불러오기]의 JSON 가져오기를 이용합니다. 파일을 검사한 뒤 미리보기에서 [이어 하기]로 적용합니다.</p>' +
     '<p><b>목표</b> : 기본 목표는 모든 도시 점령입니다. 새 게임 첫 명령 전 [위임·목표] → [승리 목표]에서 패권·24개월 도전·시나리오 목표도 선택할 수 있습니다.</p>' +
     '<p><b>야전과 공성</b> : 출진 편성의 [공략 방식]에서 야전 선행 / 바로 공성 / 수비군 판단을 고릅니다. 수비 편성에서는 [수비 방침]으로 야전 요격 또는 농성을 선택합니다. 야전에서 수비군이 이기면 침공을 막습니다. 공격군 승리 또는 [성으로 후퇴] 시 생존 부대와 예비 병력으로 공성을 이어가며, 군량은 누적 차감됩니다. 예비 병력을 지정하지 않았다면 기존 수비군의 25%를 성에 남겨 공성을 대비합니다. 야전 승리 후에는 공성에서 승리해야 도시를 점령합니다.</p>' +

@@ -209,6 +209,10 @@ main{flex:1;display:flex;min-height:0}
 .otag:hover{border-color:#4d6754;background:#1b2a20}
 .otag.used{opacity:.5;filter:saturate(.6)}
 .otag.used:hover{opacity:.85}
+.otag.leader{border-color:var(--gold);background:linear-gradient(135deg,#45351b,#292313);color:#ffe0a0;font-weight:700;box-shadow:0 0 0 1px #e6c37c26 inset}
+.otag.leader:hover{border-color:#ffe0a0;background:#4a391d}
+.otag.leader.used{opacity:.7;filter:none}
+.otag .leader-mark{padding:1px 4px;border-radius:4px;background:#e6c37c22;color:#ffe0a0;font-size:9px;font-style:normal;white-space:nowrap}
 .otag.free{border-style:dashed;border-color:#c49a4f66;background:#1c170e;color:#f0dcae}
 .otag.free:hover{border-color:#c49a4faa;background:#26200f}
 .otag.pow{border-color:#ef8b7855;background:#241413;color:#ffcfc4}
@@ -334,14 +338,33 @@ p .nums{display:inline-flex;gap:2px 10px}
 .nums .kv{white-space:nowrap}
 .nums b{color:#e9e2cf;font-weight:600}
 .row .right{margin-left:auto;font-size:12px;color:var(--gold);white-space:nowrap}
+/* ── 신무장 등록 ─────────────────────────────────── */
+.custom-toolbar,.custom-actions{display:flex;flex-wrap:wrap;gap:6px}
+.custom-list{display:grid;gap:8px;margin:14px 0}
+.custom-card{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#ffffff03;min-width:0}
+.custom-thumb{width:64px;height:64px;object-fit:cover;border-radius:8px;flex:none}
+.custom-initial{display:grid;place-items:center;background:#ffffff08;color:var(--gold);font-size:20px}
+.custom-info{flex:1;min-width:0;overflow-wrap:anywhere}.custom-info p{margin:4px 0;font-size:12px;color:var(--muted)}
+.custom-editor{display:grid;grid-template-columns:220px minmax(0,1fr);gap:22px}
+.custom-preview{display:block;width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;margin-bottom:12px}
+.custom-preview.custom-initial{display:grid}.custom-photo input{width:100%;margin:8px 0}
+.custom-fields{display:grid;gap:8px;align-content:start}.custom-fields>input,.custom-fields>select{width:100%;min-width:0}
+.custom-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0}
+.custom-stats input{display:block;width:100%;min-width:0;margin-top:6px}
+.custom-ruler{display:flex;align-items:center;gap:8px;margin-top:10px}.custom-ruler input{width:auto}
+#customForm input,#customForm select{font:inherit}#customForm input:not([type=checkbox]):not([type=file]){background:#0c140f;color:var(--ink);border:1px solid var(--line2);border-radius:7px;padding:9px;box-sizing:border-box}
+@media(max-width:600px){.custom-editor{grid-template-columns:minmax(0,1fr)}.custom-photo{max-width:220px;margin:auto}.custom-card{flex-wrap:wrap}.custom-actions{width:100%;justify-content:flex-end}.custom-toolbar button{flex:1 1 auto}.custom-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 /* ── 무장 초상화 ─────────────────────────────────── */
 .pf{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;overflow:hidden;border-radius:50%;background:radial-gradient(circle at 35% 30%,#3b2d17,#12100a);border:1px solid #a87b3c66;color:var(--gold);font-family:var(--serif);font-weight:700;line-height:1;box-shadow:inset 0 1px 0 #ffffff1a}
 .pf i{font-style:normal}
 /* 초상화 호버 툴팁 */
-.pf-tip{position:fixed;left:0;top:0;z-index:200;pointer-events:none;padding:6px;border-radius:12px;background:linear-gradient(180deg,#1a241d,#0c120f);border:1px solid var(--gold3);box-shadow:0 18px 40px #000c,0 0 0 1px #e6c37c26 inset;animation:pfTipIn .12s ease-out}
+.pf-tip{position:fixed;left:0;top:0;z-index:200;pointer-events:none;width:254px;max-width:calc(100vw - 20px);box-sizing:border-box;padding:6px;border-radius:12px;background:linear-gradient(180deg,#1a241d,#0c120f);border:1px solid var(--gold3);box-shadow:0 18px 40px #000c,0 0 0 1px #e6c37c26 inset;animation:pfTipIn .12s ease-out}
 .pf-tip[hidden]{display:none}
-.pf-tip img{display:block;width:240px;height:240px;object-fit:cover;border-radius:8px}
-.pf-tip span{display:block;margin-top:5px;font-family:var(--serif);font-size:12px;letter-spacing:.08em;color:var(--gold);text-align:center}
+.pf-tip img{display:block;width:100%;height:240px;max-height:calc(100dvh - 220px);object-fit:cover;border-radius:8px}
+.pf-name{margin:5px 0;font-family:var(--serif);font-size:13px;letter-spacing:.08em;color:var(--gold);text-align:center}
+.pf-stats{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;border-top:1px solid #ffffff17;padding:7px 5px 3px;font-size:12px}
+.pf-stats div{display:flex;justify-content:space-between;gap:8px}.pf-stats span{color:var(--muted)}.pf-stats b{color:#e9e2cf;font-variant-numeric:tabular-nums}
+.pf-detail{margin:5px 5px 2px;font-size:11px;line-height:1.5;color:#b9c5af;overflow-wrap:anywhere}
 @keyframes pfTipIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .pf.s16{width:18px;height:18px;font-size:9px}
 .pf.s22{width:24px;height:24px;font-size:10.5px}
@@ -736,6 +759,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
       <button id="btnBgm" class="ghost icoBtn on" onclick="Game.toggleBgm()" title="배경음악 켜짐 (M)" aria-label="배경음악 켜기/끄기" aria-pressed="true">♪</button>
       <button id="btnSfx" class="ghost icoBtn on" onclick="Game.toggleSfx()" title="효과음 켜짐 (N)" aria-label="효과음 켜기/끄기" aria-pressed="true">🔊</button>
       <button id="btnOfficers" class="ghost" onclick="Game.openOfficers()" title="무장 일람">무장</button>
+      <button id="btnCustomOfficers" class="ghost" onclick="CustomOfficers.open()" title="신무장 등록 · 사진 · JSON 가져오기/내보내기">신무장</button>
       <button id="btnDiplo" class="ghost" onclick="Game.openDiplo()" title="외교">외교</button>
       <button id="btnSave" class="ghost" onclick="Game.saveGame()" title="수동저장 (슬롯 3개 중 선택)">저장</button>
       <button id="btnLoad" class="ghost" onclick="Game.openLoad()" title="불러오기 (수동저장 3개 · 자동저장 3개)">불러오기</button>
@@ -797,6 +821,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
 <script src="js/combat-rules.js"></script>
 <script src="js/strategy-systems.js"></script>
 <script src="js/save-transfer.js"></script>
+<script src="js/custom-officers.js"></script>
 <script src="js/game.js"></script>
 <script src="js/battle-terrain.js"></script>
 <script src="js/battle.js"></script>
