@@ -79,6 +79,68 @@ function bindCanvasNavigation(canvas, { size, read, write, tap, enabled = () => 
   return { get active() { return pointers.size > 0; } };
 }
 
+/* 제목은 탭으로 접고, 드래그로 이동한다. 두 미니맵의 위치는 세션 중 각각 유지한다. */
+const minimapPositions = new Map();
+function bindMinimapDrag(panel) {
+  const handle = panel?.querySelector?.('summary'), parent = panel?.parentElement;
+  if (!handle || !parent) return () => {};
+  let drag = null, suppressClick = false;
+  handle.title = '드래그하여 위치 이동 · 누르면 접기/펼치기';
+  const place = (x, y) => {
+    if (!parent.clientWidth || !parent.clientHeight) return;
+    const position = {
+      x: cl(x, 0, Math.max(0, parent.clientWidth - panel.offsetWidth)),
+      y: cl(y, 0, Math.max(0, parent.clientHeight - panel.offsetHeight))
+    };
+    Object.assign(panel.style, { left: position.x + 'px', top: position.y + 'px', right: 'auto', bottom: 'auto' });
+    minimapPositions.set(panel.id, position);
+  };
+  const keepInBounds = () => {
+    const position = minimapPositions.get(panel.id);
+    if (position) place(position.x, position.y);
+  };
+  handle.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || !e.isPrimary || drag) return;
+    const r = panel.getBoundingClientRect(), p = parent.getBoundingClientRect();
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, left: r.left - p.left, top: r.top - p.top, moved: false };
+    suppressClick = false;
+    e.stopPropagation();
+    handle.setPointerCapture(e.pointerId);
+  });
+  handle.addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) <= 6) return;
+    drag.moved = true;
+    suppressClick = true;
+    panel.classList.add('is-dragging');
+    place(drag.left + dx, drag.top + dy);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  const finish = e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag = null;
+    panel.classList.remove('is-dragging');
+    if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+    e.stopPropagation();
+  };
+  handle.addEventListener('pointerup', finish);
+  handle.addEventListener('pointercancel', finish);
+  handle.addEventListener('lostpointercapture', finish);
+  handle.addEventListener('click', e => {
+    if (!suppressClick || e.detail === 0) return;
+    suppressClick = false;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }, true);
+  panel.addEventListener('toggle', keepInBounds);
+  const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(keepInBounds) : null;
+  if (observer) { observer.observe(parent); observer.observe(panel); }
+  keepInBounds();
+  return () => observer?.disconnect();
+}
+
 
 /* ── 무장 초상화 ───────────────────────────────────
    배지에는 성(姓) 첫 글자를 기본으로 보여 준다.
@@ -802,6 +864,7 @@ function boot() {
   cvM = $('mapCanvas'); ctxM = cvM.getContext('2d');
   cvM.style.cursor = 'grab';
   const minimapPanel = $('mapMinimap');
+  bindMinimapDrag(minimapPanel);
   if (minimapPanel) minimapPanel.addEventListener('toggle', drawMinimap);
   const mini = $('mapMiniCanvas');
   if (mini) mini.addEventListener('pointerup', e => {

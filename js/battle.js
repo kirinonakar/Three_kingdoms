@@ -259,6 +259,7 @@ const Battle = (function () {
       '</div></div>';
     cv = $('battleCanvas');
     ctx = cv.getContext('2d');
+    releaseMinimapDrag = bindMinimapDrag($('bMinimap'));
     $('bMinimap').addEventListener('toggle', drawMinimap);
     const mini = $('bMiniCanvas');
     if (mini) mini.addEventListener('pointerup', e => {
@@ -391,7 +392,10 @@ const Battle = (function () {
     draw();
   }
 
+  let releaseMinimapDrag = null;
   function destroyUI() {
+    if (releaseMinimapDrag) releaseMinimapDrag();
+    releaseMinimapDrag = null;
     if (canvasObserver) canvasObserver.disconnect();
     canvasObserver = null; navigation = null; fittedViewport = '';
     if (typeof window !== 'undefined' && window.removeEventListener) {
