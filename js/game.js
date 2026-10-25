@@ -2727,8 +2727,9 @@ function renderCityPanel() {
 }
 
 /* 로그 문구로 효과음을 고른다 — 명령 결과가 전황 기록에 남을 때 소리가 난다 */
-function soundForLog(msg) {
+function soundForLog(msg, cls) {
   if (typeof Sound === 'undefined' || !msg) return;
+  if (cls === 'bad' && /등용했습니다/.test(msg)) return Sound.sfx('fail');
   if (/함락/.test(msg)) return Sound.sfx('capture');
   if (/멸망|바닥났습니다|역병|흉년|떠났습니다/.test(msg)) return Sound.sfx('fail');
   if (/등용했습니다|동맹을 맺었습니다|풍년/.test(msg)) return Sound.sfx('success');
@@ -2741,7 +2742,7 @@ function log(msg, cls) {
   G.log.push({ m: '[' + G.year + '년 ' + G.month + '월] ' + msg, c: cls || '' });
   if (G.log.length > 120) G.log.shift();
   renderLog();
-  soundForLog(msg);
+  soundForLog(msg, cls);
 }
 function renderLog() {
   const el = $('logPanel'); if (!el) return;
@@ -5065,8 +5066,9 @@ function execAIAct(fid, a, cb) {
     const best=bestAvailable(a.cn);if(!best){cb();return;}
     const p=hireChance(a.cn,o,best);spend();best.used=true;
     if (Math.random() < p) {
+      const playerLoss = !!G.pf && o.faction === G.pf && fid !== G.pf;
       o.faction = fid; o.status = 'active'; o.loyalty = ri(HIRED_LOYALTY_MIN, HIRED_LOYALTY_MAX); o.captivityMonths = 0;
-      log(f.name + '이(가) ' + o.name + '을(를) 등용했습니다.', '');
+      log(f.name + '이(가) ' + (playerLoss ? '아군 무장 ' : '') + o.name + '을(를) 등용했습니다.', playerLoss ? 'bad' : '');
     }
     cb(); return;
   }

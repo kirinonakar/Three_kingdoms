@@ -218,3 +218,28 @@ for (const invalid of ['distance','own','hidden','ruler','loyalty','source','exh
 fresh(); o=target('출발지없는후보',near,'yuan'); commands=g.cmd;
 Game.doHire(o.name); assert.equal(g.cmd,commands); assert.equal(o.faction,'yuan');
 console.log('[OK] execution revalidates candidate, city ownership, available persuader and command budget');
+
+// Real AI recruitment must distinguish losing our officer from unrelated successful hiring.
+const cues=[];sandbox.Sound={sfx:cue=>cues.push(cue),bgm:noop};
+for(const kind of ['playerLoss','free','otherFaction','playerDelegation','spectator','failure']) {
+  roll=.5;Game.startNew('cao','194');g=Game.state;
+  const fid=kind==='playerDelegation'?'cao':'yuan',city=kind==='playerDelegation'?home:'업';
+  const previousFaction=kind==='free'?'free':kind==='otherFaction'||kind==='playerDelegation'?'liubei':'cao';
+  const hired=target('경고검사무장',city,previousFaction,kind==='free'?'active':'pow');
+  hired.captivityMonths=6;
+  if(kind==='spectator')g.pf=null;
+  const beforeLog=g.log.length;let completed=0;cues.length=0;
+  roll=kind==='failure'?.99:0;
+  d.execAIAct(fid,{t:'hr',cn:city,name:hired.name},()=>completed++);
+  assert.equal(completed,1);
+  if(kind==='failure') {
+    assert.equal(hired.faction,previousFaction);assert.equal(g.log.length,beforeLog);assert.deepEqual(cues,[]);
+  } else {
+    assert.equal(hired.faction,fid);
+    const entry=g.log.at(-1),lost=kind==='playerLoss';
+    assert.equal(entry.c,lost?'bad':'');assert.equal(entry.m.includes('아군 무장'),lost);
+    assert.deepEqual(cues,[lost?'fail':'success'],'player loss must play only the warning cue, never the success cue');
+    if(lost)assert.match(el('logPanel').innerHTML,/class="logline bad"[^]*아군 무장 경고검사무장/);
+  }
+}
+console.log('[OK] losing a player officer to AI hiring renders a red log and warning sound; unrelated hiring, delegation, spectator and failure do not warn');
