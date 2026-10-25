@@ -210,6 +210,7 @@ const Battle = (function () {
   function buildUI() {
     const root = $('battleRoot');
     if (!root) return;
+    if (cancelUnitLongPress) cancelUnitLongPress();
     root.innerHTML =
       '<div class="battle-bg"><div class="battle-wrap">' +
         '<div class="battle-head">' +
@@ -271,17 +272,48 @@ const Battle = (function () {
         py: ROWS*TILE/2 - (e.clientY-r.top)/r.height*ROWS*TILE*camera.scale
       });
     });
-    let touchTapEvent = null;
     navigation = bindCanvasNavigation(cv, {
       size: () => ({ width: COLS * TILE, height: ROWS * TILE, maxScale: 4 }),
       read: () => camera, write: setCamera,
-      begin: () => { touchTapEvent = null; hideUnitTooltip(); }, end: () => draw(),
-      tap: (_, e) => { if (e.pointerType === 'touch') touchTapEvent = e; }
+      begin: hideUnitTooltip, end: () => draw()
     });
+    const touches = new Set();
+    let press = null, pressTimer = null, longPressed = false;
+    const cancelPress = () => {
+      if (pressTimer !== null) clearTimeout(pressTimer);
+      pressTimer = null; press = null;
+    };
+    cancelUnitLongPress = () => { cancelPress(); touches.clear(); };
+    cv.addEventListener('pointerdown', e => {
+      if (e.pointerType !== 'touch' || e.button !== 0) return;
+      if (!touches.size) longPressed = false;
+      touches.add(e.pointerId);
+      cancelPress();
+      if (touches.size !== 1) { hideUnitTooltip(); return; }
+      press = { pointerId: e.pointerId, pointerType: 'touch', clientX: e.clientX, clientY: e.clientY };
+      pressTimer = setTimeout(() => {
+        pressTimer = null;
+        if (!press) return;
+        longPressed = true;
+        inspectTerrain(press);
+      }, 500);
+    });
+    cv.addEventListener('pointermove', e => {
+      if (press && e.pointerId === press.pointerId && Math.hypot(e.clientX - press.clientX, e.clientY - press.clientY) > 6) {
+        cancelPress(); hideUnitTooltip();
+      }
+    });
+    const finishPress = e => {
+      touches.delete(e.pointerId);
+      if (press && e.pointerId === press.pointerId) cancelPress();
+    };
+    cv.addEventListener('pointerup', finishPress);
+    cv.addEventListener('lostpointercapture', finishPress);
+    cv.addEventListener('pointercancel', e => { finishPress(e); hideUnitTooltip(); });
+    cv.addEventListener('contextmenu', e => { if (press || longPressed || e.pointerType === 'touch') e.preventDefault(); });
     cv.addEventListener('click', e => {
-      const touch = touchTapEvent; touchTapEvent = null;
+      if (longPressed) { longPressed = false; e.preventDefault(); return; }
       onClick(e);
-      if (touch) inspectTerrain(touch);
     });
     cv.addEventListener('pointermove', e => { if (!navigation.active && e.pointerType !== 'touch') inspectTerrain(e); });
     cv.addEventListener('wheel', e => {
@@ -402,8 +434,10 @@ const Battle = (function () {
     draw();
   }
 
-  let releaseMinimapDrag = null;
+  let releaseMinimapDrag = null, cancelUnitLongPress = null;
   function destroyUI() {
+    if (cancelUnitLongPress) cancelUnitLongPress();
+    cancelUnitLongPress = null;
     if (releaseMinimapDrag) releaseMinimapDrag();
     releaseMinimapDrag = null;
     if (canvasObserver) canvasObserver.disconnect();
