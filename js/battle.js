@@ -271,12 +271,18 @@ const Battle = (function () {
         py: ROWS*TILE/2 - (e.clientY-r.top)/r.height*ROWS*TILE*camera.scale
       });
     });
+    let touchTapEvent = null;
     navigation = bindCanvasNavigation(cv, {
       size: () => ({ width: COLS * TILE, height: ROWS * TILE, maxScale: 4 }),
       read: () => camera, write: setCamera,
-      begin: hideUnitTooltip, end: () => draw()
+      begin: () => { touchTapEvent = null; hideUnitTooltip(); }, end: () => draw(),
+      tap: (_, e) => { if (e.pointerType === 'touch') touchTapEvent = e; }
     });
-    cv.addEventListener('click', onClick);
+    cv.addEventListener('click', e => {
+      const touch = touchTapEvent; touchTapEvent = null;
+      onClick(e);
+      if (touch) inspectTerrain(touch);
+    });
     cv.addEventListener('pointermove', e => { if (!navigation.active && e.pointerType !== 'touch') inspectTerrain(e); });
     cv.addEventListener('wheel', e => {
       e.preventDefault();
@@ -284,7 +290,10 @@ const Battle = (function () {
       const ax = p.x * TILE * camera.scale + camera.px, ay = p.y * TILE * camera.scale + camera.py;
       setCamera({ scale, px: ax - p.x * TILE * scale, py: ay - p.y * TILE * scale });
     }, { passive: false });
-    cv.addEventListener('mouseleave', () => { const el=$('bTerrainInfo'); if(el) el.textContent='';hideUnitTooltip(); });
+    cv.addEventListener('pointerleave', e => {
+      if (e.pointerType === 'touch') return;
+      const el=$('bTerrainInfo'); if(el) el.textContent='';hideUnitTooltip();
+    });
     const board=$('bTextBoard');
     board.addEventListener('mousemove',e=>{
       const cell=e.target.closest('[data-battle-x]');
@@ -337,7 +346,7 @@ const Battle = (function () {
     const head=face
       ? '<div class="ut-head face-head">'+face+'<span class="ut-who"><b>'+escape(u.name)+'</b></span><span class="ut-army">'+sideTxt+'</span></div>'
       : '<div class="ut-head"><span class="ut-who">'+portraitHtml(u.name,22)+'<b>'+escape(u.name)+'</b></span><span class="ut-army">'+sideTxt+'</span></div>';
-    const html=head+
+    const html='<button type="button" class="ut-close" aria-label="부대 정보 닫기" onclick="Battle.hideUnitTooltip()">×</button>'+head+
       '<div class="ut-sub">'+escape(u.branch)+' · '+escape(u.form)+'진 · '+statuses.join(' · ')+'</div>'+
       '<div class="ut-grid"><span>병력</span><b>'+commas(u.troops)+' / '+commas(u.max)+'</b><span>훈련 · 사기</span><b>'+u.training+' · '+u.morale+'</b>'+
       '<span>무력 · 지력</span><b>'+o.wu+' · '+o.zhi+'</b><span>정치 · 매력</span><b>'+o.pol+' · '+o.cha+'</b></div>'+
@@ -351,6 +360,7 @@ const Battle = (function () {
       (u.branch==='궁병'?'<p>불화살 '+fireLeft(u)+'회 남음</p>':'')+
       (fortAt(u.x,u.y)?'<p class="ut-skill">성 주둔 · 지형 방어 +40% · 받는 반격 피해 -25% · 인접한 적이 없으면 성벽 사격 (사거리 2)</p>':'');
     if(el.innerHTML!==html)el.innerHTML=html;
+    el.classList.toggle('touch-info',e.pointerType==='touch');
     el.hidden=false;
     const box=el.getBoundingClientRect(),width=window.innerWidth,height=window.innerHeight;
     let left=e.clientX+18,top=e.clientY+16;
@@ -1744,6 +1754,10 @@ const Battle = (function () {
     if (!u || u.acted || B.side !== B.playerSide || B.auto) return;
     // 혼란 상태 — 이동·공격·계략·일기토·진형·대기 어떤 명령도 받지 않는다
     if (isConfused(u)) { bLog('💫 ' + u.name + ' 부대는 혼란 상태로 행동할 수 없습니다.'); return; }
+    if ((cmd === 'strat' || cmd === 'form') && B.mode === cmd) {
+      B.mode = 'select'; B.strat = null;
+      renderPanel(); return;
+    }
     if (cmd === 'move') {
       if (u.moved) { bLog('이미 이동했습니다. 공격하거나 대기하세요.'); return; }
       if (!moveRange(u).length) { bLog('이동할 수 있는 칸이 없습니다.'); return; }
@@ -3430,7 +3444,7 @@ const Battle = (function () {
 
   return {
     start, act, setStrat, setForm, reinforce, retreatTo, clickCell, observation,
-    toggleBgm, toggleSfx, syncSound, zoomBy, zoomReset,
+    toggleBgm, toggleSfx, syncSound, zoomBy, zoomReset, hideUnitTooltip,
     reinforceDays: REINF_DAYS,
     get active() { return !!B && !B.over; },
     get state() { return B; }

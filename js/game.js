@@ -3243,8 +3243,7 @@ function renderDeploy() {
         '<span class="stats">무력 ' + o.wu + ' · 지력 ' + o.zhi + '</span>' +
         '<span>병과 <select aria-label="' + n + ' 병과" id="br_' + i + '">' + opt('보병') + opt('기병') + opt('궁병') + '</select></span>' +
         '<span>진형 <select aria-label="' + n + ' 진형" id="fm_' + i + '" title="' + FORMS[curForm].desc + '">' + Object.keys(FORMS).map(fopt).join('') + '</select></span>' +
-        '<span>병력 <input aria-label="' + n + ' 병력" type="number" id="tr_' + i + '" value="' + per + '" min="0" max="' +
-        Math.min(10000, c.troops) + '" oninput="Game.updateDeployTroops(' + i + ')" style="width:84px"></span></div>';
+        deploymentTroopControl(n, i, per, Math.min(10000, c.troops)) + '</div>';
     });
     if (d.parts.length > 1) {
       body += '<div class="foot" style="margin:2px 0 10px">' +
@@ -3271,6 +3270,28 @@ function renderDeploy() {
     '<div class="foot"><button onclick="Game.closeModal()">취소</button>' +
     '<button class="primary" onclick="Game.confirmDeploy()">출진!</button></div>');
   captureDeploy();
+}
+function deploymentTroopControl(name, index, amount, max, defense = false) {
+  const prefix = defense ? 'dtr_' : 'tr_';
+  const update = defense ? 'updateDefenseTroops' : 'updateDeployTroops';
+  const button = (direction, label, arrow) => '<button type="button" aria-label="' + name + ' 병력 500명 ' + label +
+    '" title="500명 ' + label + '" onclick="Game.adjustDeployTroops(' + index + ',' + direction + ',' + defense + ')">' + arrow + '</button>';
+  return '<span class="deployment-troops">병력 <span class="troop-stepper">' + button(-1, '감소', '◀') +
+    '<input class="troop-count" aria-label="' + name + ' 병력" type="number" inputmode="numeric" id="' + prefix + index +
+    '" value="' + amount + '" min="0" max="' + max + '" oninput="Game.' + update + '(' + index + ')">' +
+    button(1, '증가', '▶') + '</span></span>';
+}
+function adjustDeployTroops(index, direction, defense = false) {
+  const plan = G && G.ui && (defense ? G.ui.defDeploy : G.ui.deploy);
+  if (!plan || !Number.isInteger(index) || index < 0 || (direction !== -1 && direction !== 1)) return;
+  const rows = defense ? plan.names : plan.rows;
+  if (!rows || index >= rows.length) return;
+  const input = $((defense ? 'dtr_' : 'tr_') + index);
+  if (!input) return;
+  const max = Math.min(10000, Math.max(0, parseInt(input.max, 10) || 0));
+  input.value = String(cl((parseInt(input.value, 10) || 0) + direction * 500, 0, max));
+  if (defense) captureDefenseDeploy(index);
+  else captureDeploy(index);
 }
 /* 편성 입력 공통 처리. 수정한 칸은 다른 부대에 배정하고 남은 병력만 사용한다.
    DOM 전체를 다시 만들지 않아 입력 중 포커스와 커서를 유지한다. */
@@ -3494,9 +3515,7 @@ function renderDefenseDeploy() {
       '<span>병과 <select aria-label="' + n + ' 병과" id="dbr_' + i + '">' + ['보병', '기병', '궁병'].map(bopt).join('') + '</select></span>' +
       '<span>진형 <select aria-label="' + n + ' 진형" id="dfm_' + i + '" title="' + FORMS[fm].desc + '">' +
         Object.keys(FORMS).map(fopt).join('') + '</select></span>' +
-      '<span>병력 <input aria-label="' + n + ' 병력" type="number" id="dtr_' + i + '" value="' + (parseInt(d.amounts[n], 10) || 0) +
-        '" min="0" max="' + Math.min(10000, Math.max(0, c.troops)) +
-        '" oninput="Game.updateDefenseTroops(' + i + ')" style="width:84px"></span></div>';
+      deploymentTroopControl(n, i, parseInt(d.amounts[n], 10) || 0, Math.min(10000, Math.max(0, c.troops)), true) + '</div>';
   }).join('');
   showModal('<h3>수비 편성 — ' + d.city + ' 방어</h3>' +
     '<p class="muted">적: ' + ((d.ctx.atk && G.factions[d.ctx.atk] ? G.factions[d.ctx.atk].name : '적')) + '군 (병력 ' + commas(atkTroops) +
@@ -5604,7 +5623,7 @@ const Game = {
   chooseMoveTarget, openMoveTargetList, beginMoveTargetPick, cancelMove, moveTargets, doMove, openDeploy, confirmDeploy,
   chooseAttackTarget, openAttackTargetList, beginAttackTargetPick, cancelAttack, attackTargets,
   addDeployCity, removeDeployCity,
-  updateDeployTroops: captureDeploy, updateDefenseTroops: captureDefenseDeploy,
+  updateDeployTroops: captureDeploy, updateDefenseTroops: captureDefenseDeploy, adjustDeployTroops,
   openDefenseDeploy, confirmDefenseDeploy, autoDefenseDeploy,
   retreatDefenseDeploy, doDefRetreat, cancelDefRetreat,
   openDefReinforce, defReinfCity, toggleDefReinf, doDefReinforce,

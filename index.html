@@ -408,6 +408,11 @@ td{font-variant-numeric:tabular-nums}
 input[type=number],select{font:inherit;background:#0b120e;color:var(--ink);border:1px solid var(--line2);border-radius:7px;padding:4px 8px}
 input[type=number]:focus,select:focus{border-color:var(--gold2)}
 input[type=checkbox]{accent-color:var(--gold2)}
+.deployment-troops{white-space:nowrap}
+.troop-stepper{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
+.troop-stepper button{flex:none;width:36px;min-height:36px;padding:0;font-size:14px}
+.troop-stepper input.troop-count{width:84px;min-width:0;text-align:center;appearance:textfield;-moz-appearance:textfield}
+.troop-count::-webkit-inner-spin-button,.troop-count::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 .frow{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid #2b3c32;border-radius:12px;margin:6px 0;cursor:pointer;background:linear-gradient(180deg,#1a241d,#141d17);transition:background .15s,border-color .15s,transform .1s,box-shadow .15s}
 .frow:hover{border-color:var(--gold2);transform:translateY(-1px);box-shadow:0 8px 22px #0008;background:#1e2b22}
 .frow .right{margin-left:auto}
@@ -554,6 +559,10 @@ input[type=checkbox]{accent-color:var(--gold2)}
 .battle-foot .auto-icon{width:14px;height:14px;margin-right:4px;vertical-align:-2px;fill:var(--gold2)}
 .battle-unit-tooltip{position:fixed;z-index:140;width:292px;max-width:calc(100vw - 24px);padding:13px 15px;border:1px solid #a58a54;border-radius:9px;background:linear-gradient(145deg,#1d2b22f7,#0b1510fa);box-shadow:0 10px 32px #000a;color:#e7e4d3;font-size:12px;line-height:1.6;pointer-events:none}
 .battle-unit-tooltip[hidden]{display:none}.ut-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.battle-unit-tooltip.touch-info{pointer-events:auto;max-height:calc(100dvh - 24px);overflow:auto;overscroll-behavior:contain}
+.ut-close{display:none}
+.touch-info .ut-close{display:block;position:absolute;top:6px;right:6px;width:32px;min-height:32px;padding:0;font-size:22px;line-height:1}
+.touch-info .ut-head{padding-right:28px}
 .ut-face{flex:none;line-height:0;border-radius:10px;overflow:hidden;border:1px solid #8a6a33;box-shadow:0 6px 18px #000a;background:#12100a}
 .ut-face img{display:block;width:60px;height:60px;object-fit:cover}
 .ut-army{white-space:nowrap}
@@ -691,6 +700,7 @@ input[type=checkbox]{accent-color:var(--gold2)}
   .modal .foot{bottom:-14px;flex-wrap:wrap;background:#121a15;padding:10px 0 2px;z-index:3}
   .modal .foot button{flex:1}
   input[type=number],select{font-size:16px;min-height:44px;max-width:100%}
+  .troop-stepper button{width:44px;min-height:44px}
   .modal table{display:block;overflow-x:auto;max-width:100%}
   .modal .officer-table{display:table;min-width:640px;max-width:none}
   .frow{flex-wrap:wrap;gap:6px 10px}
@@ -699,14 +709,14 @@ input[type=checkbox]{accent-color:var(--gold2)}
   .battle-bg{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);height:100dvh}
   .battle-head{height:52px;flex-basis:52px;padding:4px 8px}
   .bh-sound button{width:44px;height:44px}
-  .battle-map{flex:1 1 0;min-height:0;padding:6px;gap:4px;overflow:hidden}
+  .battle-map{flex:1 1 0;min-height:0;padding:6px 6px 0;gap:4px;overflow:hidden}
+  .battle-viewport{align-items:flex-end}
+  .battle-map-footer,#bTerrainInfo{display:none}
   .battle-minimap{top:4px;right:4px;width:104px;padding:3px;border-radius:6px}
   .battle-geography{gap:6px;padding:0 4px}
   .battle-geography b{font-size:12px;letter-spacing:0}
   .battle-geography span{display:none}
   .battle-geography .north{display:block;font-size:11px}
-  .battle-zoom{padding:3px}
-  .battle-zoom button{width:44px;height:44px}
   .battle-directory{display:none}
   .battle-map-score{display:grid;position:relative;z-index:1;width:100%;gap:6px}
   .battle-map-score .scard{flex-direction:row;align-items:baseline;gap:6px;min-width:0;padding:4px 8px}
