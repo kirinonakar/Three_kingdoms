@@ -6,6 +6,7 @@ const Battle = (function () {
   const COLS = 13, ROWS = 9;
   const WATER = 4, FORD = 5;          // 0 평지 · 1 숲 · 2 산 · 3 성 · 4 물 · 5 여울
   const STRATS = ['화계', '혼란', '고무'];
+  const DUEL_SCENE_MS = 2400;
   let TILE = 44, DPR = 1;
   // 부대 카드 배율 — 54 기준 카드가 타일 밖으로 튀어나오지 않게 살짝 줄인다
   const CARD_FIT = 0.86;
@@ -69,7 +70,7 @@ const Battle = (function () {
       opts, cityDef: opts.siege && opts.city ? (opts.city.def ?? 50) : 0,
       round: 1, maxRound: 15, over: false, auto: !!opts.auto,
       playerSide: opts.playerSide, side: 'atk', sel: null, autoSel: false, mode: 'select', strat: null,
-      log: [], floats: [], fx: [], busy: false, duelRequest: null, aiVolleyPlan: null, units: [], terrain: [], pending: [], supply: null, supplyRound: 0
+      log: [], floats: [], fx: [], busy: false, duelRequest: null, duelScene: null, aiVolleyPlan: null, units: [], terrain: [], pending: [], supply: null, supplyRound: 0
     };
     // 도시별 지리 약도에서 하천·산지·숲·성곽 생성
     B.geo = buildTerrain(opts.city || { name: opts.atk.name, x: 560, y: 360 }, !!opts.siege, opts.approach);
@@ -257,6 +258,7 @@ const Battle = (function () {
         '</div>' +
         '<div id="bUnitTooltip" class="battle-unit-tooltip" role="tooltip" hidden></div>' +
         '<div id="bDuelPrompt"></div>' +
+        '<div id="bDuelScene"></div>' +
       '</div></div>';
     cv = $('battleCanvas');
     ctx = cv.getContext('2d');
@@ -530,7 +532,7 @@ const Battle = (function () {
   }
 
   function step() {
-    if (!B || B.over || B.duelRequest) return;
+    if (!B || B.over || B.duelRequest || B.duelScene) return;
     if (!alive('atk').length) { end('defender'); return; }
     if (!alive('def').length) { end('attacker'); return; }
     if (checkForts()) return;
@@ -572,13 +574,16 @@ const Battle = (function () {
   // ms — 공격 연출이 끝날 무렵 다음 행동으로 넘어간다
   function afterAction(ms) {
     if (!B || B.over) return;
+    const battle = B;
     B.busy = true;
     renderPanel();
     // 전멸한 부대가 있으면 연출이 끝날 때까지 기다린다 (자동 진행 단축 없음)
-    const fast = B.auto && !anyDying();
+    const fast = B.auto && !anyDying() && !B.duelScene;
     const wait = Math.max(160, Math.round((ms || 260) * (fast ? 0.62 : 1)));
     setTimeout(() => {
-      if (!B || B.over) return;
+      if (B !== battle || B.over) return;
+      B.duelScene = null;
+      renderDuelScene();
       B.busy = false;
       B.floats = [];
       resolveDeaths();
@@ -997,13 +1002,14 @@ const Battle = (function () {
     const rally=CombatRules.talent(w).rally||0;
     if(rally) {alive(w.side).filter(x=>x!==w&&mdist(x,w)<=2).forEach(x=>{x.morale=cl(x.morale+Math.round(rally*impact),0,100);});bLog('관우의 무신의 위엄 — 인접 아군 사기 상승');}
     a.acted = true;
+    B.duelScene = { attacker: a, defender: d, winner: w };
     fx('duel', a, d);
     B.floats.push({ x: l.x, y: l.y, text: '일기토 패!' });
     bLog('⚔ 일기토! ' + a.name + '(' + a.officer.wu + ') vs ' + d.name + '(' + d.officer.wu + ') → ' + w.name + ' 승리! ' +
       l.name + ' 병력 -' + commas(loss) + ', 사기 -' + moraleLoss);
     sfx('duel');
     checkAlive(l);
-    afterAction(820);
+    afterAction(DUEL_SCENE_MS);
   }
 
   // 실행과 AI 평가가 같은 성공률·피해·회복 규칙을 사용한다.
@@ -1760,6 +1766,7 @@ const Battle = (function () {
   /* ── 입력 ──────────────────────────────────────────── */
   function act(cmd) {
     if (!B || B.over) return;
+    if (B.duelScene) return;
     if (B.duelRequest) {
       if (cmd === 'duelAccept' || cmd === 'duelRefuse') {
         const { attacker, defender } = B.duelRequest;
@@ -3356,6 +3363,30 @@ const Battle = (function () {
   }
 
   /* ── 패널 ──────────────────────────────────────────── */
+  function renderDuelScene() {
+    const el = $('bDuelScene');
+    if (!el) return;
+    const scene = !B.over && B.duelScene;
+    if (!scene) { el.innerHTML = ''; el.duelScene = null; return; }
+    // 패널을 갱신해도 같은 일기토의 CSS 애니메이션을 다시 시작하지 않는다.
+    if (el.duelScene === scene) return;
+    el.duelScene = scene;
+    const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const card = (u, side) => {
+      const won = u === scene.winner, src = u.officer.portrait || portraitSource(u.name);
+      return '<div class="duel-fighter ' + side + (won ? ' winner' : ' loser') + '">' +
+        '<div class="duel-photo">' + (src ? '<img src="' + escape(src) + '" alt="' + escape(u.name) + ' 초상화" draggable="false">' :
+          '<span class="duel-initial" aria-hidden="true">' + escape(u.name.charAt(0)) + '</span>') + '</div>' +
+        '<div class="duel-name">' + escape(u.name) + '<small>무력 ' + u.officer.wu + '</small></div>' +
+        '<span class="duel-verdict">' + (won ? '승리' : '패배') + '</span></div>';
+    };
+    el.innerHTML = '<div class="duel-scene" style="--duel-duration:' + DUEL_SCENE_MS + 'ms">' +
+      '<div class="duel-stage"><div class="duel-heading">一騎討 <span>일기토</span></div>' +
+      '<div class="duel-fighters">' + card(scene.attacker, 'left') + card(scene.defender, 'right') +
+      '<span class="duel-impact" aria-hidden="true">⚔</span></div>' +
+      '<div class="duel-result" role="status">' + escape(scene.winner.name) + ' 승리!</div></div></div>';
+  }
+
   function renderDuelPrompt() {
     const el = $('bDuelPrompt');
     if (!el) return;
@@ -3391,6 +3422,7 @@ const Battle = (function () {
     hideUnitTooltip();
     if (!B) return;
     renderDuelPrompt();
+    renderDuelScene();
     const info = $('bRoundInfo');
     if (info) {
       const forts = fortTiles();

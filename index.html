@@ -337,6 +337,30 @@ button.mycity .o.done{color:#6d7a70}
 .duel-compare th,.duel-compare td{padding:9px 6px;border-bottom:1px solid var(--line2);text-align:center;overflow-wrap:anywhere}
 .duel-compare th{position:static}
 .duel-compare thead th{color:var(--gold)}
+.duel-scene{--duel-lunge:clamp(8px,4vw,48px);position:fixed;inset:0;z-index:150;display:grid;place-items:center;padding:16px;overflow:hidden;isolation:isolate;background:radial-gradient(ellipse at center,#39432aee,#060b09f5 75%);cursor:wait}
+.duel-stage{width:min(760px,100%);text-align:center;color:var(--ink)}
+.duel-heading{margin-bottom:clamp(10px,3vh,28px);font:700 clamp(24px,5vw,40px) var(--serif);letter-spacing:.22em;color:var(--gold);text-shadow:0 3px 12px #000}
+.duel-heading span{display:block;margin-top:3px;font:12px var(--sans);letter-spacing:.3em;color:var(--muted)}
+.duel-fighters{position:relative;display:flex;justify-content:center;gap:calc(var(--duel-lunge) * 2)}
+.duel-fighter{position:relative;flex:0 0 clamp(100px,30vw,190px);min-width:0;animation:duelLeft var(--duel-duration) both}
+.duel-fighter.right{animation-name:duelRight}
+.duel-photo{height:min(38vh,250px);height:min(38dvh,250px);overflow:hidden;border:2px solid #aa986b;border-radius:9px;background:linear-gradient(135deg,#475343,#17241b);box-shadow:0 12px 35px #000b}
+.duel-photo img{display:block;width:100%;height:100%;object-fit:cover;object-position:center top}
+.duel-initial{display:grid;place-items:center;height:100%;font:700 clamp(42px,12vw,90px) var(--serif);color:var(--gold)}
+.duel-name{margin-top:8px;font:700 clamp(17px,4vw,24px) var(--serif);overflow-wrap:anywhere;text-shadow:0 2px 5px #000}
+.duel-name small{display:block;margin-top:3px;font:12px var(--sans);color:var(--muted)}
+.duel-verdict{position:absolute;top:10px;left:50%;transform:translateX(-50%);padding:3px 12px;border:1px solid currentColor;border-radius:4px;background:#08110eeb;color:var(--gold);font-weight:800;white-space:nowrap;animation:duelReveal var(--duel-duration) both}
+.duel-fighter.loser .duel-photo{filter:grayscale(1) brightness(.6);animation:duelDefeat var(--duel-duration) both}
+.duel-fighter.loser .duel-verdict{color:#c1c5c2}
+.duel-fighter.winner .duel-photo{border-color:#ffe097;box-shadow:0 0 25px #ebc96e66;animation:duelVictory var(--duel-duration) both}
+.duel-impact{position:absolute;top:36%;left:50%;z-index:2;pointer-events:none;font-size:clamp(48px,13vw,100px);color:#fff4c9;text-shadow:0 0 22px #f3c257,0 0 45px #ffe5ab;opacity:0;animation:duelImpact var(--duel-duration) both}
+.duel-result{margin-top:clamp(12px,3vh,26px);font:700 clamp(20px,5vw,30px) var(--serif);color:var(--gold);animation:duelReveal var(--duel-duration) both}
+@keyframes duelLeft{0%{opacity:0;transform:translateX(-85vw)}28%,35%{opacity:1;transform:translateX(0)}44%{transform:translateX(var(--duel-lunge)) rotate(5deg)}52%{transform:translateX(-12px) rotate(-3deg)}64%,100%{opacity:1;transform:translateX(0)}}
+@keyframes duelRight{0%{opacity:0;transform:translateX(85vw)}28%,35%{opacity:1;transform:translateX(0)}44%{transform:translateX(calc(var(--duel-lunge) * -1)) rotate(-5deg)}52%{transform:translateX(12px) rotate(3deg)}64%,100%{opacity:1;transform:translateX(0)}}
+@keyframes duelDefeat{0%,46%{filter:grayscale(0) brightness(1)}64%,100%{filter:grayscale(1) brightness(.6)}}
+@keyframes duelVictory{0%,50%{border-color:#aa986b;box-shadow:0 12px 35px #000b}64%,100%{border-color:#ffe097;box-shadow:0 0 25px #ebc96e66}}
+@keyframes duelReveal{0%,58%{opacity:0}70%,100%{opacity:1}}
+@keyframes duelImpact{0%,36%{opacity:0;transform:translate(-50%,-50%) scale(.4)}44%{opacity:1;transform:translate(-50%,-50%) scale(1.25)}59%,100%{opacity:0;transform:translate(-50%,-50%) scale(1.8)}}
 .modal h3{margin:0 0 10px;color:var(--gold);font-family:var(--serif);font-size:17px;letter-spacing:.02em;padding-bottom:8px;border-bottom:1px solid #ffffff0d}
 .modal .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;padding-top:12px;border-top:1px solid #ffffff0a;position:sticky;bottom:-18px;background:linear-gradient(180deg,#121a1500,#121a15 40%);}
 .row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #2b3c32;border-radius:10px;margin:4px 0;cursor:pointer;background:linear-gradient(180deg,#1a241d,#151e18);transition:background .15s,border-color .15s,transform .1s}

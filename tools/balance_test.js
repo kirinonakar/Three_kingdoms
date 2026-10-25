@@ -12,12 +12,12 @@ const el = id => els[id] || (els[id] = {
   addEventListener(t, f) { this.handlers[t] = f; }, getContext: () => ctx,
   getBoundingClientRect: () => ({ left: 0, top: 0, width: 572, height: 396 })
 });
-let random = () => .5, timers = false;
+let random = () => .5, timers = false, pendingTimers = null;
 const math = Object.create(Math); math.random = () => random();
 const sandbox = { console, Math: math,
   document: { getElementById: el, querySelectorAll: () => [], createElement: () => el('_') },
   localStorage: { getItem: () => null, setItem: noop },
-  setTimeout: fn => { if (timers) fn(); return 0; }, clearTimeout: noop
+  setTimeout: (fn, ms) => { if (pendingTimers) pendingTimers.push({fn, ms}); else if (timers) fn(); return 0; }, clearTimeout: noop
 };
 sandbox.window = sandbox;
 vm.createContext(sandbox);
@@ -26,7 +26,7 @@ const battle = fs.readFileSync(process.env.BALANCE_BATTLE_SOURCE || path.join(ro
 assert(battle.includes(marker), 'battle probe insertion point changed');
 vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js', 'battle-terrain.js'].map(f =>
   fs.readFileSync(f==='combat-rules.js'&&process.env.BALANCE_RULES_SOURCE?process.env.BALANCE_RULES_SOURCE:path.join(root, 'js', f), 'utf8')).join('\n') + '\n' +
-  battle.replace(marker, '    probe: { calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct, checkForts, syncForts, fortDuty, chargeOptions, attackAct, doCharge, attackTargets, volleyPartners, doVolley, moveRange, costField, fordPath },\n' + marker), sandbox);
+  battle.replace(marker, '    probe: { renderPanel, calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct, checkForts, syncForts, fortDuty, chargeOptions, attackAct, doCharge, attackTargets, volleyPartners, doVolley, moveRange, costField, fordPath },\n' + marker), sandbox);
 const { Game, Battle } = sandbox, p = Battle.probe;
 const rules=vm.runInContext('CombatRules',sandbox);
 const officer = (name, wu = 80, zhi = 80) => ({ name, wu, zhi, pol: 80, cha: 80, skill: '' });
@@ -122,6 +122,8 @@ for (const playerSide of ['atk','def']) for (const accept of [false,true]) for (
   assert(!b.auto&&b.duelRequest&&!b.over,'other commands must not bypass the response');
   Battle.act(accept?'duelAccept':'duelRefuse');
   assert.equal(b.duelRequest,null);assert.equal(els.bDuelPrompt.innerHTML,'');
+  assert.equal(!!b.duelScene,accept,'only accepted duels show the portrait animation');
+  assert.equal(!!els.bDuelScene.innerHTML,accept);
   const scale=Math.min(1,troops/1000);
   assert.equal(d.troops,accept?4321-Math.round(4321*.1*scale):4321);
   assert.equal(d.morale,86-Math.round(25*scale)*(accept?1:2));
@@ -145,6 +147,49 @@ for(const auto of [false,true]) {
   assert(b.log.some(line=>line.includes('거부했습니다')));
 }
 console.log('[OK] duel accept/refuse on both armies, comparison popup, paused inputs, double scaled morale loss, no refusal troop loss, AI responses');
+
+// Both outcomes must use the actual winner, hold all input, and finish before play resumes.
+for (const roll of [0,.99]) for (const auto of [false,true]) {
+  b=setup([unit('하후돈',3000),unit('ally',3000)],[unit('이각',3000)]);
+  a=b.units[0];d=b.units[2];d.x=5;b.units[1].x=3;b.sel=a;b.auto=auto;
+  random=()=>roll;pendingTimers=[];
+  p.doDuel(a,d);
+  const winner=roll===0?a:d,loser=roll===0?d:a,scene=b.duelScene;
+  assert.equal(scene.winner,winner);assert(b.busy);
+  assert.equal(pendingTimers.length,1);assert.equal(pendingTimers[0].ms,2400,'auto mode must preserve the entire duel');
+  const html=els.bDuelScene.innerHTML;
+  assert(html.includes('xiahoudun.jpg')&&html.includes('lijue.jpg'),'show both existing portraits');
+  assert(html.includes('duel-fighter '+(winner===a?'left':'right')+' winner'));
+  assert(html.includes('duel-fighter '+(loser===a?'left':'right')+' loser'));
+  assert(html.includes(winner.name+' 승리!'));
+  // Any panel refresh must preserve the DOM, so CSS animations keep their current time.
+  let rewrites=0,storedHtml=html;
+  Object.defineProperty(els.bDuelScene,'innerHTML',{configurable:true,get:()=>storedHtml,set:value=>{rewrites++;storedHtml=value;}});
+  p.renderPanel();assert.equal(rewrites,0,'panel refresh restarted the portrait animation');
+  const before=[b.round,a.troops,d.troops,a.morale,d.morale];
+  for(const cmd of ['auto','nextTurn','retreat','duel','duelAccept','duelRefuse'])Battle.act(cmd);
+  Battle.clickCell(d.x,d.y);
+  assert.equal(b.auto,auto);assert.equal(b.duelScene,scene);
+  assert.deepEqual([b.round,a.troops,d.troops,a.morale,d.morale],before);
+  assert(Battle.observation().tiles.every(t=>t.action===null));
+  pendingTimers.shift().fn();
+  assert.equal(b.duelScene,null);assert.equal(els.bDuelScene.innerHTML,'');
+  assert(auto?pendingTimers.some(t=>t.ms===430):!b.busy,'turn flow must resume after the scene');
+  Object.defineProperty(els.bDuelScene,'innerHTML',{configurable:true,writable:true,value:storedHtml});
+  pendingTimers=null;
+}
+// Custom portraits are reused; a photo-less officer still has a visible fallback.
+b=setup([unit('custom <A>',3000)],[unit('no photo',3000)]);a=b.units[0];d=b.units[1];
+a.officer.portrait='data:image/png;base64,AAAA';random=()=>0;
+p.doDuel(a,d);
+assert(els.bDuelScene.innerHTML.includes('data:image/png;base64,AAAA'));
+assert(els.bDuelScene.innerHTML.includes('custom &lt;A&gt;'));
+assert(els.bDuelScene.innerHTML.includes('duel-initial'));
+// A timeout belonging to a replaced battle must not clear the new scene or advance its turn.
+b=setup();pendingTimers=[];p.doDuel(b.units[0],b.units[1]);const staleTimer=pendingTimers[0];pendingTimers=null;
+b=setup();p.doDuel(b.units[0],b.units[1]);const currentScene=b.duelScene;
+staleTimer.fn();assert.equal(b.duelScene,currentScene);assert(b.busy);
+console.log('[OK] duel portraits, both winners, custom/fallback faces, stable animation DOM, full auto duration, input lock, cleanup/resume, stale timer isolation');
 
 // Branch counters, terrain and generals must still affect otherwise equal armies.
 random = () => .5;
