@@ -2529,7 +2529,7 @@ function renderCityPanel() {
     hire: '재야·포로 무장을 설득합니다 (명령 1)',
     reward: '금 ' + REWARD_COST + '으로 충성도를 올립니다 (명령 1)'
   };
-  let dock = '';
+  let dock = '', commandWarning = '';
   if (mine) {
     if (!offs.length) colB += '<p class="warn">주둔 무장이 없어 내정·군사 명령을 내릴 수 없습니다. [이동]으로 무장을 배치하세요.</p>';
     else if (!avail) {
@@ -2543,7 +2543,10 @@ function renderCityPanel() {
       }
     }
     if (G.fullDelegation) colB += '<p class="muted">전체위임 중입니다. 직접 명령하려면 [위임·목표]에서 전체위임을 해제하세요.</p>';
-    else if (noCmd) colB += '<p class="warn">명령권이 없습니다. [턴 종료]로 다음 달로 넘어가세요.</p>';
+    else if (noCmd) {
+      commandWarning = '<p class="warn city-command-warning" role="status">명령권이 없습니다. [턴 종료]로 다음 달로 넘어가세요.</p>';
+      colB += commandWarning;
+    }
     const groups = [
       ['내정', [['agri', '田', '개발'], ['comm', '商', '상업'], ['order', '安', '치안'], ['def', '修', '수복']]],
       ['군사', [['recruit', '兵', '징병'], ['levy', '募', '모병'], ['train', '訓', '훈련'], ['move', '移', '이동'], ['attack', '攻', '출진']]],
@@ -2590,7 +2593,7 @@ function renderCityPanel() {
       ' onclick="Game.cmdAttackFrom(\'' + c.name + '\')"><i class="ico">攻</i><span>이 도시 공격</span></button></div></div></div>';
   }
   h += '<div class="city-cols"><div class="city-col">' + colA + '</div><div class="city-col">' + colB + '</div></div>';
-  el.innerHTML = '<div class="city-details">' + h + '</div>' + dock;
+  el.innerHTML = commandWarning + '<div class="city-details">' + h + '</div>' + dock;
 }
 
 /* 로그 문구로 효과음을 고른다 — 명령 결과가 전황 기록에 남을 때 소리가 난다 */

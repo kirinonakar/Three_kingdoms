@@ -145,6 +145,7 @@ main{flex:1;display:flex;min-height:0}
   border-left:1px solid var(--line2);background:linear-gradient(180deg,#131c16,#0e1511);
 }
 #cityPanel{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 12px 14px}
+#cityPanel>.city-command-warning{display:none}
 #logWrap{flex:0 0 clamp(132px,21vh,212px);display:flex;flex-direction:column;min-height:0;border-top:1px solid var(--line2);background:#0c120e}
 .panel-h{
   display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 14px;
@@ -614,8 +615,10 @@ input[type=checkbox]{accent-color:var(--gold2)}
   #mapTools{gap:8px}
   #mapTools button{width:44px;height:44px}
   #side{display:none;flex:1;min-height:0;height:auto;overflow:hidden}
-  #cityDirectory{flex:none}
+  #cityDirectory{display:none}
   #cityPanel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;padding:0}
+  #cityPanel>.city-command-warning{display:block;flex:none;margin:8px 10px 0}
+  .city-details .city-command-warning{display:none}
   .city-details,#cityPanel>.empty{flex:1;min-height:0;overflow:auto;padding:12px;overscroll-behavior:contain}
   #cityPanel>.cmd-dock{flex:none;margin:0;padding:8px 10px;border-top:1px solid var(--line2);background:#101a14}
   #logWrap{display:none;flex:1;min-height:0}
