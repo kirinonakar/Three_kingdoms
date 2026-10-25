@@ -733,6 +733,14 @@ input[type=checkbox]{accent-color:var(--gold2)}
   .battle-commands{display:flex;flex-direction:column;flex:0 1 auto;min-height:0;max-height:100%;gap:6px;padding:6px 8px 8px;border-top:1px solid var(--line);background:#0b110d}
   #bUnit{height:auto;min-height:0;max-height:none;flex:none;padding:8px}
   #bUnit .b-unit-portrait img{width:72px;height:86px}
+  #bUnit .b-unit-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"name portrait" "badges portrait" "trait portrait" "stats stats";gap:2px 10px}
+  #bUnit .b-unit-info{display:contents}
+  #bUnit .bn{grid-area:name}
+  #bUnit .badges{grid-area:badges}
+  #bUnit .b-unit-info>p{grid-area:trait}
+  #bUnit .b-unit-portrait{grid-area:portrait}
+  #bUnit .kv{grid-area:stats;grid-template-columns:auto 1fr auto 1fr;gap:2px 6px;white-space:nowrap}
+  #bUnit .kv>b:first-of-type{grid-column:2/-1}
   #bUnit .hints{min-height:0}
   #bActs{flex:0 1 auto;min-height:0;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;max-height:min(224px,32dvh);overflow:auto;overscroll-behavior:contain}
   #bActs button{min-height:48px;font-size:12px}

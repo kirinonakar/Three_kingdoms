@@ -123,7 +123,7 @@ for (const branch of ['보병', '기병']) for (const side of ['atk', 'def']) {
   const plan = f.battle.aiVolleyPlan;
   assert(plan); assert.equal(first, plan.mate);
   p.aiAct(first);
-  assert(first.moved && !first.acted); assert.equal(first.volley, 2); assert.equal(f.target.troops, 3000);
+  assert(first.moved && !first.acted); assert.equal(first.volley, branch === '보병' ? 2 : 0); assert.equal(f.target.troops, 3000);
   const second = p.aiNextUnit(allies);
   assert.equal(second, plan.leader); assert.notEqual(second, first);
   p.aiAct(second);
@@ -131,12 +131,12 @@ for (const branch of ['보병', '기병']) for (const side of ['atk', 'def']) {
   const finisher = p.aiNextUnit(allies);
   assert.equal(finisher, plan.leader);
   p.aiAct(finisher);
-  assert(first.acted && second.acted); assert.equal(first.volley, 1); assert.equal(second.volley, 1);
+  assert(first.acted && second.acted); assert.equal(first.volley, branch === '보병' ? 1 : 0); assert.equal(second.volley, 1);
   assert.equal(first.troops, 3000); assert.equal(second.troops, 3000);
   assert(f.target.troops < 3000); assert.equal(f.battle.aiVolleyPlan, null);
   assert(f.battle.log.some(line => line.includes('일제공격!')));
 }
-for (const disabled of [{ acted: true }, { moved: true }, { confusedNow: true }, { volley: 0 }, { dying: true }, { branch: '궁병' }]) {
+for (const disabled of [{ acted: true }, { moved: true }, { confusedNow: true }, { branch: '보병', volley: 0 }, { dying: true }, { branch: '궁병' }]) {
   const f = stagingFixture(); Object.assign(f.mate, disabled);
   assert.equal(p.aiPlanVolley([f.mate, f.leader]), null, 'must not reserve an unavailable partner');
 }

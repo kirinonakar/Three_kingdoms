@@ -100,7 +100,7 @@ const Battle = (function () {
       branch: br, form: fm,
       x: 0, y: 0, acted: false, moved: false, confused: 0, confusedNow: false, dueled: false, alive: true,
       charge: br === '기병' ? CHARGE_MAX : 0,
-      volley: br === '보병' || br === '기병' ? VOLLEY_MAX : 0,
+      volley: br === '보병' ? VOLLEY_MAX : 0,
       fire: br === '궁병' ? FIRE_ARROWS_MAX : 0, burn: 0, burnRate: 0
     };
   }
@@ -388,7 +388,7 @@ const Battle = (function () {
       '<p>'+escape(BRANCHES[u.branch].desc)+'</p><p>'+escape((FORMS[u.form]||{}).desc||'')+'</p>'+
       (u.branch==='기병'?'<p>돌격 '+chargeLeft(u)+'회 남음</p>':'')+
       (u.branch==='보병'?'<p>일제공격 '+volleyLeft(u)+'회 남음 (시작·참여 시 1회 소모)</p>':'')+
-      (u.branch==='기병'?'<p>일제공격 참여 '+volleyLeft(u)+'회 남음 (보병이 시작할 때 참여만 가능)</p>':'')+
+      (u.branch==='기병'?'<p>일제공격은 보병이 시작할 때 횟수 제한 없이 참여할 수 있습니다.</p>':'')+
       (u.branch==='궁병'?'<p>불화살 '+fireLeft(u)+'회 남음</p>':'')+
       (fortAt(u.x,u.y)?'<p class="ut-skill">성 주둔 · 지형 방어 +40% · 받는 반격 피해 -25% · 인접한 적이 없으면 성벽 사격 (사거리 2)</p>':'');
     if(el.innerHTML!==html)el.innerHTML=html;
@@ -769,17 +769,18 @@ const Battle = (function () {
   }
 
   /* ── 보병 일제공격 — 보병·기병 2부대 이상이 함께 공격한다 ─ */
-  const VOLLEY_MAX = 2;        // 부대당 한 전투의 일제공격 참여 횟수
+  const VOLLEY_MAX = 2;        // 보병 부대당 한 전투의 일제공격 시작·참여 횟수
   const VOLLEY_PARTNERS = 2;    // 함께 공격할 수 있는 동료 부대 수
   const VOLLEY_RATE = 0.6;      // 동료 1부대당 피해 비율
 
   function volleyLeft(u) { return u && u.volley > 0 ? u.volley : 0; }
+  function canJoinVolley(u) { return u && (u.branch === '기병' || u.branch === '보병' && volleyLeft(u) > 0); }
 
   function volleyPartners(u, target) {
     if (!u || u.branch !== '보병' || volleyLeft(u) <= 0 || !target || !target.alive) return [];
     if (!meleeReachable(u, target)) return [];
     return B.units.filter(x => x !== u && x.alive && x.side === u.side &&
-      (x.branch === '보병' || x.branch === '기병') && volleyLeft(x) > 0 && !x.acted && !isConfused(x) && meleeReachable(x, target))
+      canJoinVolley(x) && !x.acted && !isConfused(x) && meleeReachable(x, target))
       .slice(0, VOLLEY_PARTNERS);
   }
   function volleyTargets(u) {
@@ -795,7 +796,7 @@ const Battle = (function () {
     let total = 0;
     group.forEach((x, i) => {
       total += Math.round(calcDamage(x, target) * (i === 0 ? 1 : VOLLEY_RATE));
-      x.volley = volleyLeft(x) - 1;
+      if (x.branch === '보병') x.volley = volleyLeft(x) - 1;
       x.acted = true;
       fx('slash', x, target, { delay: i * 170 });
     });
@@ -1395,7 +1396,7 @@ const Battle = (function () {
   }
   function aiVolleyReady(u) {
     return u && u.alive && !u.dying && !u.acted && !isConfused(u) && u.troops > 0 && u.morale > 0 &&
-      (u.branch === '보병' || u.branch === '기병') && volleyLeft(u) > 0;
+      canJoinVolley(u);
   }
   function aiVolleyPositions(u, target) {
     const current = meleeReachable(u, target) ? [{ x: u.x, y: u.y }] : [];
@@ -1808,7 +1809,7 @@ const Battle = (function () {
     if (cmd === 'volley') {
       if (u.branch !== '보병') { bLog('일제공격은 보병만 시작할 수 있습니다. 기병은 보병의 일제공격에 참여만 할 수 있습니다.'); return; }
       if (volleyLeft(u) <= 0) { bLog(u.name + ' 부대는 이번 전투의 일제공격 2회를 모두 썼습니다.'); return; }
-      if (!volleyTargets(u).length) { bLog('함께 공격할 수 있는 보병·기병 부대가 적에 인접해 있지 않습니다. 일제공격 횟수가 남아 있어야 합니다.'); return; }
+      if (!volleyTargets(u).length) { bLog('함께 공격할 수 있는 보병·기병 부대가 적에 인접해 있지 않습니다. 보병은 일제공격 횟수가 남아 있어야 합니다.'); return; }
       B.mode = 'volley'; renderPanel(); return;
     }
     if (cmd === 'fire') {
@@ -3407,7 +3408,6 @@ const Battle = (function () {
             (u.burn > 0 ? '<span class="badge2" style="color:#ff9d5c">화상</span>' : '') +
             (u.branch === '기병' ? '<span class="badge2">돌격 ' + chargeLeft(u) + '회 남음</span>' : '') +
             (u.branch === '보병' ? '<span class="badge2">일제공격 ' + volleyLeft(u) + '회 남음</span>' : '') +
-            (u.branch === '기병' ? '<span class="badge2">일제공격 참여 ' + volleyLeft(u) + '회 남음</span>' : '') +
             (u.branch === '궁병' ? '<span class="badge2" style="color:#ffb070">불화살 ' + fireLeft(u) + '</span>' : '') +
             (fortAt(u.x, u.y) ? '<span class="badge2" style="color:#ffd479">성 안 · 방어 +40% · 반격 피해 -25%</span><p class="muted">인접한 적이 없으면 성벽 사격 · 사거리 2</p>' : '') +
             (sk ? '<span class="badge2" style="color:var(--gold)">' + u.officer.skill + '</span>' : '') + '</div>' +
