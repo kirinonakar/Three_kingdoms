@@ -129,6 +129,38 @@ for (const honor of [0,25,50,75,100]) {
 honorablePow.captivityMonths=3;honorablePow.honor=0;const lowHonorThreeMonths=chance(home,honorablePow,persuader);
 honorablePow.honor=100;assert(chance(home,honorablePow,persuader)<lowHonorThreeMonths);
 console.log('[OK] prisoner odds rise monotonically to free officer odds over 3–6 months, with higher honor taking longer');
+
+// Conquering the last city releases existing and newly captured prisoners as ordinary free officers.
+fresh();
+const orphanPow=g.officers.find(o=>o.name==='안량');
+Object.assign(orphanPow,{city:home,status:'pow',loyalty:100,captivityMonths:0});
+const distantPow=g.officers.find(o=>o.name==='문추');
+Object.assign(distantPow,{city:'성도',status:'pow',loyalty:100,captivityMonths:5});
+const newPow=g.officers.find(o=>o.name==='고람');
+Object.assign(newPow,{city:'업',status:'active',loyalty:100});
+assert.equal(chance(home,orphanPow,persuader),0);
+Object.values(g.cities).filter(c=>c.owner==='yuan'&&c.name!=='업').forEach(c=>{c.owner='cao';});
+assert.equal(chance(home,orphanPow,persuader),0,'one remaining source city must keep normal prisoner odds');
+roll=.99;
+d.applyBattleResult({atk:'cao',def:'yuan',from:home,to:'업'},
+  {winner:'attacker',atk:[],def:[{name:newPow.name,troops:0}],captured:[newPow.name]});
+for(const [released,city] of [[orphanPow,home],[distantPow,'성도'],[newPow,'업']]) {
+  assert.equal(released.status,'active');assert.equal(released.faction,'free');assert.equal(released.city,city);
+  assert.equal(released.loyalty,0);assert.equal(released.captivityMonths,0);
+  const ordinaryFree={...released,name:'일반재야',honor:0};
+  assert.equal(chance(home,released,persuader),chance(home,ordinaryFree,persuader));
+}
+const orphanFreeChance=chance(home,{...orphanPow,name:'일반재야',honor:0},persuader);
+const orphanPreview=chance(home,orphanPow,d.bestAvailable(home));
+Game.cmdHire(home);
+assert(el('modalRoot').innerHTML.includes(home+' · 재야 · 성공률 '+Math.round(orphanPreview*100)+'%'));
+const saveData=JSON.parse(JSON.stringify(g));
+assert(Game.previewImport(JSON.stringify(saveData)));Game.confirmImport();g=Game.state;
+const restored=g.officers.find(o=>o.name==='안량');
+assert.equal(restored.status,'active');assert.equal(restored.faction,'free');assert.equal(restored.loyalty,0);
+assert.equal(chance(home,restored,persuader),orphanFreeChance);
+roll=chance(home,restored,d.bestAvailable(home))/2;Game.doHire(restored.name,home);assert.equal(restored.faction,'cao');
+console.log('[OK] faction elimination releases prisoners locally as free officers with normal recruitment odds; release survives saving and recruitment');
 // Use evenly distributed rolls to measure actual integer loyalty loss, avoiding flaky statistical tests.
 for (const honor of [0,50,100]) {
   const officer={name:'검사무장',honor,loyalty:90};let totalLoss=0;
