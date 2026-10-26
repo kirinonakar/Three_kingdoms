@@ -1141,6 +1141,7 @@ function renderTop() {
   $('goldInfo').title = '월 수입 ' + economy.goldIncome + ' · 군 급료 ' + economy.goldUpkeep + ' · 순수입 ' + economy.goldNet;
   $('foodInfo').title = '월 생산 ' + economy.foodIncome + ' · 소비 ' + economy.foodUpkeep + ' · 순증감 ' + economy.foodNet;
   $('cmdInfo').textContent = G.cmd + ' / ' + G.cmdMax;
+  $('cmdInfo').classList.toggle('exhausted', G.cmd === 0);
   $('cityInfo').textContent = factionCities(G.pf).length + ' / ' + Object.keys(G.cities).length;
   const busy = !!G.aiRunning || !!attackIntro;
   ['btnSave', 'btnLoad', 'btnOfficers', 'btnCustomOfficers', 'btnDiplo', 'btnPolicies'].forEach(id => { const el = $(id); if (el) el.disabled = busy; });
@@ -2569,7 +2570,6 @@ function renderCityPanel() {
       '<h3>' + (G.pf ? '명령을 내릴 도시를 선택하세요' : '관전할 도시를 선택하세요') + '</h3>' +
       '<p class="muted">' + (G.pf ? '지도에서 도시를 클릭하거나 아래 목록에서 내 도시를 고르세요.<br>지도 빈 곳을 클릭하면 이 목록이 나타납니다.' : '모든 세력이 AI의 지휘로 행동합니다. 지도나 아래 목록에서 도시 현황을 살펴볼 수 있습니다.') + '</p>' +
       '<div class="empty-stats">' +
-        '<div class="chip"><span class="k">명령권</span><b>' + G.cmd + ' / ' + G.cmdMax + '</b></div>' +
         '<div class="chip"><span class="k">보유 도시</span><b>' + mine.length + ' / ' + Object.keys(G.cities).length + '</b></div>' +
       '</div>' +
       '<div class="mylist"><div class="mylist-h"><span>' + (G.pf ? '보유 도시' : '전체 도시') + ' · 바로 선택</span><b>' + mine.length + '곳</b></div>' +
@@ -2594,7 +2594,7 @@ function renderCityPanel() {
     '<h3>' + c.name + '</h3><span class="fac-chip">' + (f ? f.name : '재야') + '</span><span class="fac-chip" title="인구 9만 미만: 소 · 9만 이상: 중 · 14만 이상: 대">' + citySize(c).label + '</span></div>' +
     '<span class="badge ' + (mine ? 'mine' : ally ? 'ally' : 'foe') + '">' + (!G.pf ? 'AI 운영 도시' : mine ? '내 도시' : ally ? '동맹국 도시' : '적 도시') + '</span></div>';
   /* 좌측 열: 도시 현황 */
-  let colA = '<div class="city-management"><p class="muted">'+objectiveStatus().label+'</p><p class="muted">위임: '+(!G.pf || G.fullDelegation ? '전체위임 · AI 운영' : CITY_POLICIES[c.policy]||CITY_POLICIES.manual)+'</p></div><div class="cmdline"><span>명령권</span><b>' + G.cmd + ' / ' + G.cmdMax + '</b></div>';
+  let colA = '<div class="city-management"><p class="muted">위임: '+(!G.pf || G.fullDelegation ? '전체위임 · AI 운영' : CITY_POLICIES[c.policy]||CITY_POLICIES.manual)+'</p></div>';
   colA += '<div class="statlist">' + [['agri', '농업'], ['comm', '상업'], ['def', '방어'], ['order', '치안']].map(([k, label]) =>
     '<div class="srow"><span class="k">' + label + '</span><div class="bar"><i class="barfill ' + k + '" style="width:' + c[k] + '%"></i></div><b class="v">' + c[k] + '</b></div>'
   ).join('') + '</div>';
@@ -2696,7 +2696,7 @@ function renderCityPanel() {
       hire: 'Game.cmdHire(\'' + c.name + '\')', reward: 'Game.cmdReward(\'' + c.name + '\')'
     };
     const blockedBase = noCmd || noOff;
-    dock = '<div class="cmd-dock"><div class="city-command-heading"><b>' + c.name + '</b><span>명령권 ' + G.cmd + ' / ' + G.cmdMax + '</span></div>';
+    dock = '<div class="cmd-dock"><div class="city-command-heading"><b>' + c.name + '</b></div>';
     groups.forEach(([label, list]) => {
       const cols = list.length === 2 ? ' c2' : list.length === 3 ? ' c3' : (list.length === 5 ? ' c5' : '');
       dock += '<div class="cmdgroup"><span class="cg-label">' + label + '</span><div class="cmds' + cols + '">' +
@@ -3266,7 +3266,7 @@ function openDeploy(from, target, namesCsv) {
   if (!names.length) return;
   G.ui.deploy = {
     target, main: from, parts: [{ city: from, names }],
-    amounts: {}, branches: {}, forms: {}, auto: false, mode:'auto', rows: []
+    amounts: {}, branches: {}, forms: {}, auto: false, rows: []
   };
   renderDeploy();
 }
@@ -3274,13 +3274,14 @@ function renderDeploy() {
   const d = G.ui.deploy; if (!d) return;
   const t = G.cities[d.target];
   if(!t||t.owner===G.pf||hasPeace(G.pf,t.owner)) {toast('현재 공격할 수 없는 도시입니다');return;}
+  const mainCity = d.parts.some(p => p.city === d.main) ? d.main : d.parts[0].city;
   const rowsInfo = [];
   let body = '';
   d.parts.forEach((p, pi) => {
     const c = G.cities[p.city];
     let remaining = c.troops;
     const defaults = distribute(Math.max(0, c.troops - 2000), p.names.length);
-    body += '<div class="sec"><span>' + p.city + ' 합류 부대</span><b>현재 병력 ' +
+    body += '<div class="sec"><span>' + p.city + (p.city === mainCity ? ' 공격 부대' : ' 원군') + '</span><b>현재 병력 ' +
       commas(c.troops) + '</b></div><p class="muted" id="deployTotal_' + pi + '" aria-live="polite"></p>';
     p.names.forEach((n, ni) => {
       const o = off(n);
@@ -3311,18 +3312,18 @@ function renderDeploy() {
   const total = d.parts.reduce((s, p) => s + p.names.length, 0);
   showModal('<h3>출진 편성 — ' + d.parts.map(p => p.city).join(' + ') + ' → ' + d.target + '</h3>' +
     '<p class="muted">적: ' + (G.factions[t.owner] ? G.factions[t.owner].name : '재야') +
-    ' (병력 ' + commas(t.troops) + ', 방어도 ' + t.def + ', 훈련 ' + t.training + ') · 합류 무장 ' + total + '명</p>' +
-    (d.parts.length > 1 ? '<p class="muted">합류 도시 부대는 본대보다 늦게 도착하며(원군과 같은 행군 일수), 전투가 끝나면 무장과 잔존 병력이 각자 출발 도시로 복귀합니다.</p>' : '') +
-    '<p class="muted">진형은 장수마다 따로 지정합니다 — ' +
+    ' (병력 ' + commas(t.troops) + ', 방어도 ' + t.def + ', 훈련 ' + t.training + ') · 참전 무장 ' + total + '명</p>' +
+    (d.parts.length > 1 ? '<p class="muted">원군은 공격 부대보다 늦게 도착하며, 전투가 끝나면 무장과 잔존 병력이 각자 출발 도시로 복귀합니다.</p>' : '') +
+    '<p class="muted">진형 — ' +
       Object.keys(FORMS).map(f => '<b>' + f + '</b> ' + FORMS[f].desc).join(' · ') + '</p>' +
-    '<p><label>공략 방식 <select id="battleMode" aria-label="공략 방식" onchange="Game.updateDeployTroops()"><option value="auto"' + (d.mode==='auto'?' selected':'') + '>수비군 판단에 따라 야전 / 공성</option><option value="field"' + (d.mode==='field'?' selected':'') + '>야전 선행</option><option value="siege"' + (d.mode==='siege'?' selected':'') + '>바로 공성</option></select></label></p>' +
+    '<p class="muted">수비군의 판단에 따라 야전 요격 또는 농성으로 전투가 시작됩니다.</p>' +
     '<p class="muted">야전 승리 후에는 잔존 병력으로 공성을 이어갑니다. 도시 점령은 공성 승리 후 확정됩니다.</p>' +
     '<p><label class="muted"><input type="checkbox" id="autoBattle"' + (d.auto ? ' checked' : '') + '> 자동 전투(지휘 위임)</label></p>' +
     '<p class="muted" id="deploySupplyForecast" aria-live="polite"></p>' +
-    '<p id="deployAttackForecast" aria-live="polite"></p><p class="muted">손실은 지형·지휘·원군에 따라 달라지는 참고 범위입니다. 합류 부대는 행군 지연을 감안합니다.</p>' +
+    '<p id="deployAttackForecast" aria-live="polite"></p>' +
     body +
-    (cands.length ? '<div class="cmdgroup"><span class="cg-label">인접 지역 합류 (원군처럼 늦게 도착)</span><div class="cmds c2">' +
-      cands.map(c => '<button class="cmd" onclick="Game.addDeployCity(\'' + c.name + '\')"><span>' + c.name + ' 합류</span></button>').join('') +
+    (cands.length ? '<div class="cmdgroup"><span class="cg-label">인접 지역 원군 (공격 부대보다 늦게 도착)</span><div class="cmds c2">' +
+      cands.map(c => '<button class="cmd" onclick="Game.addDeployCity(\'' + c.name + '\')"><span>' + c.name + ' 원군</span></button>').join('') +
       '</div></div>' : '') +
     '<div class="foot"><button onclick="Game.closeModal()">취소</button>' +
     '<button class="primary" onclick="Game.confirmDeploy()">출진!</button></div>');
@@ -3385,7 +3386,6 @@ function syncDeploymentTroops(plan, rows, prefix, changedIndex) {
 function captureDeploy(changedIndex) {
   const d = G.ui.deploy; if (!d) return;
   const a = $('autoBattle'); if (a) d.auto = !!a.checked;
-  const mode=$('battleMode');if(mode&&['auto','siege','field'].includes(mode.value))d.mode=mode.value;
   const totals = syncDeploymentTroops(d, d.rows || [], 'tr_', changedIndex);
   (d.rows || []).forEach((r, i) => {
     const b = $('br_' + i);
@@ -3406,13 +3406,13 @@ function captureDeploy(changedIndex) {
       const c=G.cities[r.city],o=off(r.name),branch=d.branches[r.name]||autoBranch(o);
       return {officer:o,troops:d.amounts[r.name]||0,branch,form:d.forms[r.name]||defaultForm(branch),training:c.training,morale:c.morale,delayed:r.city!==d.main};
     });
-    outlook.textContent=forecastText(attackForecast(d.main,d.target,units,d.mode));
+    outlook.textContent=forecastText(attackForecast(d.main,d.target,units));
   }
 }
 function addDeployCity(cityName) {
   const d = G.ui.deploy; if (!d) return;
   captureDeploy();
-  openPick(cityName, { max: 0, min: 1, title: cityName + ' 합류 무장 선택 (인원 제한 없음)', score: PICK_SCORE.attack }, names => {
+  openPick(cityName, { max: 0, min: 1, title: cityName + ' 원군 무장 선택 (인원 제한 없음)', score: PICK_SCORE.attack }, names => {
     if (d.parts.some(p => p.city === cityName)) return;
     d.parts.push({ city: cityName, names });
     renderDeploy();
@@ -3470,13 +3470,13 @@ function confirmDeploy() {
   const days = (typeof Battle !== 'undefined' && Battle.reinforceDays) || 3;
   const ctx = {
     atk: G.pf, def: t.owner, from: d.main, to: d.target, home,
-    siege: d.mode==='field'?false:d.mode==='siege'?true:!aiFieldDefense(t, mainUnits),
+    siege: !aiFieldDefense(t, mainUnits),
     extra: extra.filter(g => g.units.length)          // 합동 출진 부대 (원군처럼 늦게 도착)
   };
   Object.keys(perCity).forEach(k => { G.cities[k].troops -= perCity[k]; });
   log('⚔ ' + Object.keys(perCity).join('·') + '의 ' + G.factions[G.pf].name + '군 ' +
     commas(total) + '명이 ' + t.name + '으로 출진!' +
-    (ctx.extra.length ? ' (합류 도시 부대는 행군 ' + days + '일 후 도착 · 전투 후 복귀)' : ''), 'war');
+    (ctx.extra.length ? ' (원군은 행군 ' + days + '일 후 도착 · 전투 후 복귀)' : ''), 'war');
   beginBattle(ctx, mainUnits, defenseUnits(d.target), 'atk', auto);
 }
 
@@ -4654,6 +4654,7 @@ function renderTopSafe() {
   $('goldInfo').textContent = '0';
   $('foodInfo').textContent = '0';
   $('cmdInfo').textContent = '0';
+  $('cmdInfo').classList.remove('exhausted');
   $('cityInfo').textContent = '0';
   ['btnSave', 'btnLoad', 'btnOfficers', 'btnDiplo', 'btnPolicies', 'btnEndTurn'].forEach(id => { const el = $(id); if (el) el.disabled = false; });
 }
@@ -5481,7 +5482,7 @@ function openHelp() {
     '<p><b>신무장</b> : 시작 화면이나 상단 [신무장]에서 이름·능력치·의리·특기·전투 속성·사진·도시와 군주 교체를 설정합니다. 무쌍·인덕 등 특기 20종 중 1개와 비장·신산 등 전투 속성 16종 중 1개를 함께 선택할 수 있습니다. 등록한 신무장은 모든 새 게임에 반영됩니다. 진행 중인 게임에는 [배치]로 적용하고 게임도 저장하세요. 신무장 JSON과 전체 게임 저장 JSON에 선택한 특기·전투 속성이 유지됩니다.</p>' +
     '<p><b>파일 이전</b> : [저장]의 JSON 내보내기, [불러오기]의 JSON 가져오기를 이용합니다. 파일을 검사한 뒤 미리보기에서 [이어 하기]로 적용합니다.</p>' +
     '<p><b>목표</b> : 기본 목표는 모든 도시 점령입니다. 새 게임 첫 명령 전 [위임·목표] → [승리 목표]에서 패권·24개월 도전·시나리오 목표도 선택할 수 있습니다.</p>' +
-    '<p><b>야전과 공성</b> : 출진 편성의 [공략 방식]에서 야전 선행 / 바로 공성 / 수비군 판단을 고릅니다. 수비 편성에서는 [수비 방침]으로 야전 요격 또는 농성을 선택합니다. 야전에서 수비군이 이기면 침공을 막습니다. 공격군 승리 또는 [성으로 후퇴] 시 생존 부대와 예비 병력으로 공성을 이어가며, 군량은 누적 차감됩니다. 예비 병력을 지정하지 않았다면 기존 수비군의 25%를 성에 남겨 공성을 대비합니다. 야전 승리 후에는 공성에서 승리해야 도시를 점령합니다.</p>' +
+    '<p><b>야전과 공성</b> : 전투는 수비군의 판단에 따라 야전 요격 또는 농성으로 시작됩니다. 수비 편성에서는 [수비 방침]으로 야전 요격 또는 농성을 선택합니다. 야전에서 수비군이 이기면 침공을 막습니다. 공격군 승리 또는 [성으로 후퇴] 시 생존 부대와 예비 병력으로 공성을 이어가며, 군량은 누적 차감됩니다. 예비 병력을 지정하지 않았다면 기존 수비군의 25%를 성에 남겨 공성을 대비합니다. 야전 승리 후에는 공성에서 승리해야 도시를 점령합니다.</p>' +
     '<p><b>도시 위임</b> : [위임·목표]에서 농업·상업·군사·최전선·후방 지원을 지정합니다. 턴 종료 시 남은 명령권으로 도시당 한 번 실행하며 금·무장 행동을 사용합니다.</p>' +
     '<p><b>전체위임·AI 관전</b> : [위임·목표] → [전체위임 시작]으로 내정·외교·군사·전투와 월 진행을 AI에 맡길 수 있습니다. 세력을 선택했다면 상단 [전체위임 해제] 또는 위임 메뉴에서 직접 지휘로 돌아올 수 있으며, 이미 실행한 행동과 소모한 명령권은 유지됩니다. 타이틀의 [전체 AI 관전]은 세력 선택 없이 모든 세력을 AI가 운영합니다. 관전에서는 상단 버튼으로 일시정지·재개할 수 있습니다. 전체위임 중 창을 열면 잠시 멈추고 닫으면 이어서 진행합니다.</p>' +
     '<p><b>장수 개성</b> : 제갈량·관우·장비·조조·주유·여포는 고유 능력이 있습니다. 무장 일람과 부대 설명에서 확인합니다. 12개 관계 조합은 같은 전장의 병력 1,000명 이상인 상대 장수가 있어야 보너스를 제공합니다.</p>' +

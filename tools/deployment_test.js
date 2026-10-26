@@ -68,11 +68,24 @@ input('tr_0',0);input('tr_1',0);
 assert.equal(els.deployAttackForecast.textContent,'편성 병력 없음');
 input('tr_0',601);input('tr_1',600);
 assert.equal(els.deployAttackForecast.textContent,initialForecast,'forecast must recover when the actual army is restored');
-els.battleMode.value='field';Game.updateDeployTroops();
-assert.match(els.deployAttackForecast.textContent,/야전 후 공성 포함/);
-els.battleMode.value='siege';Game.updateDeployTroops();
-assert.match(els.deployAttackForecast.textContent,/공성 기준/);
+assert(!modalIds.has('battleMode'),'attack deployment must not offer a battle mode');
+assert(!('mode' in f.g.ui.deploy),'attack deployment must not store a battle mode');
 Game.confirmDeploy(); assert.equal(starts.length, 1); assert.equal(f.source.troops, 2000);
+
+// Both manual and delegated attacks follow the defender, even with a stale attack mode.
+for (const auto of [false, true]) for (const field of [false, true]) {
+  f = fixture();
+  Object.assign(f.target, { troops: 20000, training: 100, morale: 100, def: field ? 50 : 100 });
+  Game.openDeploy(f.source.name, f.target.name, f.names.join('|'));
+  f.g.ui.deploy.mode = field ? 'siege' : 'field';
+  els.autoBattle.checked = auto;
+  Game.updateDeployTroops();
+  assert.match(els.deployAttackForecast.textContent,field ? /야전 후 공성 포함/ : /공성 기준/);
+  Game.confirmDeploy();
+  assert.equal(starts.length,1);
+  assert.equal(starts[0].siege,!field,'the defender must determine the battlefield');
+  assert.equal(starts[0].auto,auto);
+}
 f = fixture(1201);
 Game.openDeploy(f.source.name, f.target.name, f.names.join('|'));
 assert(modalHTML.includes('현재 병력 1,201</b>'));
@@ -139,6 +152,16 @@ els.dtr_0.value = '5000'; Game.confirmDefenseDeploy(); assert.equal(starts.lengt
 input('dtr_0', 400); Game.confirmDefenseDeploy();
 assert.equal(starts.length, 1); assert.equal(starts[0].def.units.reduce((s, u) => s + u.troops, 0), 400);
 assert.equal(f.g.battleCtx.defReserve, 801);
+// The player retains the choice when commanding the defending army.
+for (const mode of ['field','siege']) {
+  f = fixture();
+  Game.openDefenseDeploy({ from: f.target.name, to: f.source.name, atk: f.target.owner, def: 'cao' }, []);
+  assert(modalIds.has('defMode'));
+  els.defMode.value = mode;
+  Game.confirmDefenseDeploy();
+  assert.equal(starts.length,1);
+  assert.equal(starts[0].siege,mode==='siege');
+}
 console.log('[OK] attack/defense live totals, shared city budgets, current-only count, empty input, final guards, joint deployment');
 
 // Drive animation frames explicitly: committing an army must not open or resolve

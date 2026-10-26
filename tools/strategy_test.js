@@ -131,11 +131,14 @@ console.log('[OK] five-scenario JSON roundtrip, invalid import preserves game, p
 // Forecasts are deterministic estimates of the selected army, never simulated battles.
 g=fresh();g.factions.cao.food=1e6;
 const forecastArmy=[unit('하후돈',6000)];
-const beforeForecast=JSON.stringify(g),outlook=d.attackForecast('허창','낙양',forecastArmy,'siege');
-assert.equal(JSON.stringify(g),beforeForecast);assert.deepEqual(outlook,d.attackForecast('허창','낙양',forecastArmy,'siege'));
+g.cities['낙양'].def=100;
+const beforeForecast=JSON.stringify(g),outlook=d.attackForecast('허창','낙양',forecastArmy);
+assert.equal(JSON.stringify(g),beforeForecast);assert.deepEqual(outlook,d.attackForecast('허창','낙양',forecastArmy));
+assert.equal(outlook.field,false);
 assert(outlook.low>=0&&outlook.high<=6000&&outlook.low<=outlook.high);
-const large=d.attackForecast('허창','낙양',[unit('하후돈',12000)],'siege');assert(large.ratio>outlook.ratio);
-const field=d.attackForecast('허창','낙양',forecastArmy,'field');assert(field.field&&field.high>=outlook.high);
+const large=d.attackForecast('허창','낙양',[unit('하후돈',12000)]);assert(large.ratio>outlook.ratio);
+Object.assign(g.cities['낙양'],{def:50,troops:20000,training:100,morale:100});
+const field=d.attackForecast('허창','낙양',forecastArmy);assert(field.field&&field.high>=outlook.high);
 g.factions.cao.food=0;assert(d.attackForecast('허창','낙양',forecastArmy).shortage);
 g.cities['낙양'].troops=0;assert.equal(d.attackForecast('허창','낙양',forecastArmy).high,0);
 assert.equal(d.attackForecast('허창','낙양',[]),null);

@@ -11,7 +11,7 @@ const AI_STYLES = {
 function aiStyle(fid) {return AI_STYLES[G.leaders?.[fid]]||AI_STYLES.balanced;}
 
 /* 공성·원군을 포함한 전력 추정. 난수를 쓰거나 실제 전투/자원을 변경하지 않는다. */
-function attackForecast(from,target,units=null,mode='auto') {
+function attackForecast(from,target,units=null) {
   const src=G.cities[from],dst=G.cities[target];
   if(!src||!dst||src.owner===dst.owner||hasPeace(src.owner,dst.owner))return null;
   if(!units) {
@@ -25,7 +25,7 @@ function attackForecast(from,target,units=null,mode='auto') {
   const defenders=defenseUnits(target);
   const power=units.reduce((s,u)=>s+unitPower(u,units,{opponents:defenders})*(u.delayed ? .8 : 1),0);
   const ratio=power/Math.max(1,aiDefensePower(dst,units));
-  const field=mode==='field'||(mode==='auto'&&aiFieldDefense(dst,units));
+  const field=aiFieldDefense(dst,units);
   const supply=Math.ceil(total*(field?24:12)/600*expeditionRate({atk:src.owner,to:target},'atk'));
   const shortage=G.factions[src.owner].food<supply;
   const assessedRatio=ratio*(shortage ? .75 : 1);
@@ -47,7 +47,7 @@ function cityAttackForecast(target) {
     .map(n=>({from:n,p:attackForecast(n,target)})).filter(r=>r.p);
   if(!rows.length)return '';
   return '<div class="enemy-note"><b>공격 전망</b>'+rows.map(r=>'<p>'+r.from+' 출진 '+commas(r.p.total)+'명: '+forecastText(r.p)+'</p>').join('')+
-    '<p class="muted">도시별 2,000명을 남긴 기본 편성 기준. 방어도·훈련·사기·무장·인접 적 원군을 반영한 간이 전력 모델의 참고 범위이며, 지형·지휘·추가 원군에 따라 달라집니다. 출진 편성에서 다시 확인하세요.</p></div>';
+    '</div>';
 }
 
 /* 전역 기록: 야전→공성은 최종 결과 하나만 집계. 승리 참전 1회 = 전공 1점. */
