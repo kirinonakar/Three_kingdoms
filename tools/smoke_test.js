@@ -184,7 +184,7 @@ Game.startNew('cao');
   const atk = Game._debug.pickSorted('허창', S.attack);
   check(atk.length > 1 && atk[0].name === '전위', '출진 정렬 오류: ' + (atk[0] && atk[0].name));
   const adm = Game._debug.pickSorted('허창', S.admin);
-  check(adm.length > 1 && adm[0].name === '만총', '내정 정렬 오류: ' + (adm[0] && adm[0].name));
+  check(adm.length > 1 && adm[0].name === '순욱', '내정 정렬 오류: ' + (adm[0] && adm[0].name));
   const rec = Game._debug.pickSorted('허창', S.recruit);
   check(rec.length > 1 && rec[0].name === '조조', '징병 정렬 오류: ' + (rec[0] && rec[0].name));
   Game._debug.markUsed(['전위']);

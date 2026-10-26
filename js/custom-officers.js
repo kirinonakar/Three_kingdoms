@@ -12,9 +12,11 @@ const CustomOfficers = (() => {
     const honor = raw.honor === undefined ? defaultOfficerHonor(raw.name) : raw.honor;
     if (!Number.isInteger(honor) || honor < 0 || honor > 100) throw Error('의리는 0~100의 정수여야 합니다');
     if (typeof raw.skill !== 'string' || (raw.skill !== '' && !Object.hasOwn(SKILLS, raw.skill))) throw Error('지원하지 않는 특기입니다');
+    const talent = raw.talent === undefined ? '' : raw.talent;
+    if (typeof talent !== 'string' || (talent !== '' && !Object.hasOwn(CombatRules.talents, talent))) throw Error('지원하지 않는 전투 속성입니다');
     if (!CITY_DEFS.some(c => c[0] === raw.city)) throw Error('배속 도시가 잘못되었습니다');
     if (typeof raw.ruler !== 'boolean' || !validPhoto(raw.portrait)) throw Error('군주 설정 또는 사진 형식이 잘못되었습니다');
-    return {name:raw.name, wu:raw.wu, zhi:raw.zhi, pol:raw.pol, cha:raw.cha, honor, skill:raw.skill, city:raw.city, ruler:raw.ruler, portrait:raw.portrait};
+    return {name:raw.name, wu:raw.wu, zhi:raw.zhi, pol:raw.pol, cha:raw.cha, honor, skill:raw.skill, talent, city:raw.city, ruler:raw.ruler, portrait:raw.portrait};
   }
   function validateList(list) {
     if (!Array.isArray(list) || list.length > MAX) throw Error('신무장은 최대 ' + MAX + '명까지 등록할 수 있습니다');
@@ -72,7 +74,7 @@ const CustomOfficers = (() => {
       '<div class="custom-toolbar"><button class="primary" onclick="CustomOfficers.edit()">새 무장 등록</button><button onclick="CustomOfficers.importFile()">JSON 가져오기</button><button onclick="CustomOfficers.exportFile()"' + (!list.length ? ' disabled' : '') + '>JSON 내보내기</button></div>' +
       '<div class="custom-list">' + (list.map((o, i) => '<article class="custom-card">' +
         (o.portrait ? '<img class="custom-thumb" src="' + o.portrait + '" alt="' + html(o.name) + ' 초상화">' : '<span class="custom-thumb custom-initial" aria-hidden="true">' + html(o.name[0]) + '</span>') +
-        '<div class="custom-info"><b>' + html(o.name) + '</b><p>' + html(o.city) + ' · ' + (o.ruler ? '군주 교체' : '일반 무장') + ' · ' + html(o.skill || '특기 없음') + '</p><p>무 ' + o.wu + ' · 지 ' + o.zhi + ' · 정 ' + o.pol + ' · 매 ' + o.cha + ' · 의리 ' + o.honor + '</p></div>' +
+        '<div class="custom-info"><b>' + html(o.name) + '</b><p>' + html(o.city) + ' · ' + (o.ruler ? '군주 교체' : '일반 무장') + ' · ' + html(o.skill || '특기 없음') + ' · ' + html(o.talent || '전투 속성 없음') + '</p><p>무 ' + o.wu + ' · 지 ' + o.zhi + ' · 정 ' + o.pol + ' · 매 ' + o.cha + ' · 의리 ' + o.honor + '</p></div>' +
         '<div class="custom-actions"><button onclick="CustomOfficers.edit(' + i + ')">수정</button>' + (!atTitle ? '<button onclick="CustomOfficers.deploy(' + i + ')">배치</button>' : '') + '<button onclick="CustomOfficers.remove(' + i + ')">삭제</button></div></article>').join('') || '<p class="muted">아직 등록한 신무장이 없습니다.</p>') + '</div>' +
       '<p class="muted">사진도 JSON에 포함됩니다. 등록부 삭제·가져오기는 이미 진행 중인 게임의 무장을 변경하지 않습니다.</p>' +
       '<div class="foot"><button onclick="CustomOfficers.leave()">' + (atTitle ? '시작 화면으로' : '닫기') + '</button></div>', {closable:false});
@@ -85,7 +87,7 @@ const CustomOfficers = (() => {
       if (index === undefined && list.length >= MAX) throw Error('신무장은 최대 ' + MAX + '명입니다');
       editing = index === undefined ? null : list[index].name;
       const s = scenario(), cities = scenarioCities(s);
-      const o = index === undefined ? {name:'',wu:70,zhi:70,pol:70,cha:70,honor:70,skill:'',city:(!atTitle && G.sel) || cities[0][0],ruler:false,portrait:''} : list[index];
+      const o = index === undefined ? {name:'',wu:70,zhi:70,pol:70,cha:70,honor:70,skill:'',talent:'',city:(!atTitle && G.sel) || cities[0][0],ruler:false,portrait:''} : list[index];
       photoEpoch++; photo = o.portrait; photoBusy = false;
       showModal('<h3>' + (editing ? '신무장 수정' : '새 무장 등록') + '</h3><form id="customForm" onsubmit="event.preventDefault();CustomOfficers.saveForm()">' +
         '<div class="custom-editor"><div class="custom-photo"><div id="customPhotoPreview">' + previewHtml() + '</div>' +
@@ -95,7 +97,11 @@ const CustomOfficers = (() => {
         '<div class="custom-stats">' + [['wu','무력'],['zhi','지력'],['pol','정치'],['cha','매력']].map(([key,label]) => '<label for="custom-' + key + '">' + label + '<input id="custom-' + key + '" type="number" required min="1" max="100" step="1" value="' + o[key] + '"></label>').join('') + '</div>' +
         '<label for="customHonor">의리 (0~100)</label><input id="customHonor" type="number" required min="0" max="100" step="1" value="' + o.honor + '">' +
         '<p class="muted">높을수록 충성도가 덜 떨어지고 적 소속일 때 등용이 어렵습니다. 포로가 된 뒤에도 설득이 쉬워지기까지 더 오래 걸립니다. 플레이 중 무장 정보에는 표시하지 않습니다.</p>' +
-        '<label for="customSkill">특기</label><select id="customSkill"><option value="">없음</option>' + Object.keys(SKILLS).map(k => '<option' + (k === o.skill ? ' selected' : '') + '>' + html(k) + '</option>').join('') + '</select>' +
+        '<label for="customSkill">특기</label><select id="customSkill" onchange="CustomOfficers.updateTraits()"><option value="">없음</option>' + Object.keys(SKILLS).map(k => '<option' + (k === o.skill ? ' selected' : '') + '>' + html(k) + '</option>').join('') + '</select>' +
+        '<p id="customSkillDesc" class="muted">' + html(SKILLS[o.skill]?.desc || '특기 효과 없음') + '</p>' +
+        '<label for="customTalent">전투 속성</label><select id="customTalent" onchange="CustomOfficers.updateTraits()"><option value="">없음</option>' + Object.keys(CombatRules.talents).map(k => '<option' + (k === o.talent ? ' selected' : '') + '>' + html(k) + '</option>').join('') + '</select>' +
+        '<p id="customTalentDesc" class="muted">' + html(CombatRules.talents[o.talent]?.desc || '전투 속성 효과 없음') + '</p>' +
+        '<p class="muted">무쌍·인덕 등의 특기 1개와 비장·신산 등의 전투 속성 1개를 함께 설정할 수 있습니다. 전투 속성은 해당 행동을 할 때 발동하며, 주변 지휘 효과는 가장 강한 하나만 적용됩니다.</p>' +
         '<label for="customCity">배속 도시 · ' + html(s.name) + '</label><select id="customCity">' + cities.map(c => {
           const owner = atTitle ? c[4] : G.cities[c[0]].owner;
           const name = atTitle ? (s.names?.[owner] || scenarioFactions(s).find(f => f[0] === owner)?.[1]) : G.factions[owner].name;
@@ -104,6 +110,10 @@ const CustomOfficers = (() => {
         '<p class="muted">군주가 되면 충성도 100, 세력명은 신무장 이름으로 바뀝니다. 새 게임은 선택한 시나리오의 도시 소유 세력을 따릅니다.</p></div></div>' +
         '<div class="foot"><button type="button" onclick="CustomOfficers.open(' + atTitle + ')">취소</button><button id="customSubmit" type="submit" class="primary">등록부 저장</button></div></form>', {closable:false});
     } catch (e) { toast(e.message); }
+  }
+  function updateTraits() {
+    $('customSkillDesc').textContent = SKILLS[$('customSkill').value]?.desc || '특기 효과 없음';
+    $('customTalentDesc').textContent = CombatRules.talents[$('customTalent').value]?.desc || '전투 속성 효과 없음';
   }
   function previewHtml() { return photo ? '<img class="custom-preview" src="' + photo + '" alt="선택한 무장 사진">' : '<span class="custom-preview custom-initial">사진 없음</span>'; }
   function updatePhoto() { const el = $('customPhotoPreview'); if (el) el.innerHTML = previewHtml(); }
@@ -134,7 +144,7 @@ const CustomOfficers = (() => {
   function saveForm() {
     if (!guard() || photoBusy) return;
     try {
-      const raw = {name:$('customName').value.trim(), skill:$('customSkill').value, city:$('customCity').value, ruler:$('customRuler').checked, portrait:photo};
+      const raw = {name:$('customName').value.trim(), skill:$('customSkill').value, talent:$('customTalent').value, city:$('customCity').value, ruler:$('customRuler').checked, portrait:photo};
       raw.honor = $('customHonor').value === '' ? NaN : Number($('customHonor').value);
       for (const k of ['wu','zhi','pol','cha']) raw[k] = Number($('custom-' + k).value);
       const o = validate(raw), list = read(), index = list.findIndex(p => p.name === editing);
@@ -160,7 +170,7 @@ const CustomOfficers = (() => {
     if (!old && game.officers.filter(o => o.custom).length >= MAX) throw Error('현재 게임의 신무장은 최대 ' + MAX + '명입니다');
     const leading = old && Object.entries(game.leaders).find(([fid,name]) => name === old.name && Object.values(game.cities).some(c => c.owner === fid));
     if (leading && (leading[0] !== city.owner || !p.ruler)) throw Error('현재 군주는 다른 세력으로 옮기거나 일반 무장으로 배치할 수 없습니다. 먼저 새 군주로 교체하세요');
-    const officer = {name:p.name, wu:p.wu, zhi:p.zhi, pol:p.pol, cha:p.cha, skill:p.skill, portrait:p.portrait, custom:true,
+    const officer = {name:p.name, wu:p.wu, zhi:p.zhi, pol:p.pol, cha:p.cha, skill:p.skill, talent:p.talent, portrait:p.portrait, custom:true,
       faction:city.owner, city:p.city, loyalty:p.ruler ? 100 : (old && old.faction === city.owner ? old.loyalty : 90),
       honor:p.honor,
       status:'active', used:old ? old.used : false, captivityMonths:0, debut:game.year, join:''};
@@ -201,7 +211,7 @@ const CustomOfficers = (() => {
       if (atTitle) checkAssignments(merged,scenarioCities(scenario()));
       pending = merged;
       showModal('<h3>신무장 JSON 가져오기</h3><p>' + imported.length + '명 · 새 등록 ' + (imported.length-duplicates) + '명 · 같은 이름 갱신 ' + duplicates + '명</p>' +
-        '<p>' + imported.map(o => html(o.name)).join(' · ') + '</p><p class="muted">사진·능력치·배속 설정을 등록부에 합칩니다. 현재 게임에는 [배치]로 반영하세요.</p>' +
+        '<p>' + imported.map(o => html(o.name)).join(' · ') + '</p><p class="muted">사진·능력치·특기·전투 속성·배속 설정을 등록부에 합칩니다. 현재 게임에는 [배치]로 반영하세요.</p>' +
         '<div class="foot"><button onclick="CustomOfficers.open(' + atTitle + ')">취소</button><button class="primary" onclick="CustomOfficers.confirmImport()">등록부에 가져오기</button></div>',{closable:false});
       return true;
     } catch (e) { pending = null; toast('가져오기 실패: ' + e.message); return false; }
@@ -222,7 +232,7 @@ const CustomOfficers = (() => {
       } catch (e) { toast('가져오기 실패: ' + e.message); }
     }; input.click();
   }
-  return {open, leave, edit, saveForm, selectPhoto, clearPhoto, remove, deploy, exportFile, importFile, previewImport, confirmImport,
+  return {open, leave, edit, saveForm, updateTraits, selectPhoto, clearPhoto, remove, deploy, exportFile, importFile, previewImport, confirmImport,
     applyNewGame, checkNewGame, entries, validate, validPhoto, safeName, MAX, _debug:{read,write,parse,serialize,apply}};
 })();
 window.CustomOfficers = CustomOfficers;

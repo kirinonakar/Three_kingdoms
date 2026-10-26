@@ -36,7 +36,7 @@ function validateSave(data) {
     if(!o||(!known.has(o.name)&&o.custom!==true)||names.has(o.name)||!canonical.has(o.city)||(!fids.has(o.faction)&&o.faction!=='free')||!['active','pow','hidden','retired'].includes(o.status||'active'))throw Error('무장 정보가 잘못되었습니다');
     if(o.custom===true) {
       if(!custom || ++customCount>custom.MAX)throw Error('신무장 목록이 잘못되었습니다');
-      custom.validate({...o,ruler:false});
+      o.talent=custom.validate({...o,ruler:false}).talent;
     } else if(o.portrait!==undefined) delete o.portrait;
     names.add(o.name);
     for(const k of ['wu','zhi','pol','cha'])if(!finite(o[k],0,100))throw Error('무장 능력치가 잘못되었습니다');

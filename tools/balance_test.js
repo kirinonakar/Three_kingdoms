@@ -26,7 +26,7 @@ const battle = fs.readFileSync(process.env.BALANCE_BATTLE_SOURCE || path.join(ro
 assert(battle.includes(marker), 'battle probe insertion point changed');
 vm.runInContext(['data.js', 'combat-rules.js', 'strategy-systems.js', 'save-transfer.js', 'game.js', 'battle-terrain.js'].map(f =>
   fs.readFileSync(f==='combat-rules.js'&&process.env.BALANCE_RULES_SOURCE?process.env.BALANCE_RULES_SOURCE:path.join(root, 'js', f), 'utf8')).join('\n') + '\n' +
-  battle.replace(marker, '    probe: { renderPanel, calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, roundStart, timeUp, end, tryAct, checkForts, syncForts, fortDuty, chargeOptions, attackAct, doCharge, attackTargets, volleyPartners, doVolley, moveRange, costField, fordPath },\n' + marker), sandbox);
+  battle.replace(marker, '    probe: { renderPanel, calcDamage, doFireArrow, doStratAct, doDuel, duelTargets, duelWinChance, duelMatchWinChance, roundStart, timeUp, end, tryAct, checkForts, syncForts, fortDuty, chargeOptions, attackAct, doCharge, attackTargets, volleyPartners, doVolley, moveRange, costField, fordPath },\n' + marker), sandbox);
 const { Game, Battle } = sandbox, p = Battle.probe;
 const rules=vm.runInContext('CombatRules',sandbox);
 const officer = (name, wu = 80, zhi = 80) => ({ name, wu, zhi, pol: 80, cha: 80, skill: '' });
@@ -165,14 +165,16 @@ for (const roll of [0,.99]) for (const auto of [false,true]) for (const challeng
   p.doDuel(a,d);
   const winner=roll===0?a:d,loser=roll===0?d:a,scene=b.duelScene;
   assert.equal(scene.winner,winner);assert(b.busy);
-  assert.equal(pendingTimers.length,1);assert.equal(pendingTimers[0].ms,2400,'auto mode must preserve the entire duel');
+  assert.equal(scene.rounds.length,2,'a sweep ends after two rounds');
+  assert.equal(pendingTimers.length,1);assert.equal(pendingTimers[0].ms,2400,'auto mode must preserve each duel round');
   const html=els.bDuelScene.innerHTML;
   assert(html.includes('xiahoudun.jpg')&&html.includes('lijue.jpg'),'show both existing portraits');
   assert(html.includes('duel-fighter '+(winner.side==='atk'?'left':'right')+' winner'));
   assert(html.includes('duel-fighter '+(loser.side==='atk'?'left':'right')+' loser'));
   const cards=[...html.matchAll(/class="duel-fighter (left|right) (winner|loser)"[\s\S]*?class="duel-name">([^<]+)/g)];
   assert.deepEqual(cards.map(card=>[card[1],card[3]]),[['left','하후돈'],['right','이각']],'army order must remain fixed for either challenger and winner');
-  assert(html.includes(winner.name+' 승리!'));
+  assert(html.includes(winner.name+' 이번 판 승리!'));
+  assert(html.includes('3판 2승제 · 1판'));
   // Any panel refresh must preserve the DOM, so CSS animations keep their current time.
   let rewrites=0,storedHtml=html;
   Object.defineProperty(els.bDuelScene,'innerHTML',{configurable:true,get:()=>storedHtml,set:value=>{rewrites++;storedHtml=value;}});
@@ -183,6 +185,13 @@ for (const roll of [0,.99]) for (const auto of [false,true]) for (const challeng
   assert.equal(b.auto,auto);assert.equal(b.duelScene,scene);
   assert.deepEqual([b.round,a.troops,d.troops,a.morale,d.morale],before);
   assert(Battle.observation().tiles.every(t=>t.action===null));
+  pendingTimers.shift().fn();
+  assert(b.busy&&b.duelScene,'the first win must not end the match');
+  assert.equal(b.duelScene.roundIndex,1);
+  assert(els.bDuelScene.innerHTML.includes('3판 2승제 · 2판'));
+  assert(els.bDuelScene.innerHTML.includes(winner.name+' 최종 승리!'));
+  assert.deepEqual([b.round,a.troops,d.troops,a.morale,d.morale],before,'match effects apply only once');
+  assert.equal(pendingTimers[0].ms,2400);
   pendingTimers.shift().fn();
   assert.equal(b.duelScene,null);assert.equal(els.bDuelScene.innerHTML,'');
   assert(auto?pendingTimers.some(t=>t.ms===430):!b.busy,'turn flow must resume after the scene');
@@ -202,6 +211,50 @@ b=setup();p.doDuel(b.units[0],b.units[1]);const currentScene=b.duelScene;
 staleTimer.fn();assert.equal(b.duelScene,currentScene);assert(b.busy);
 console.log('[OK] duel portraits, both winners, custom/fallback faces, stable animation DOM, full auto duration, input lock, cleanup/resume, stale timer isolation');
 
+// All possible best-of-three paths, including a winner who loses the opening round.
+for(const outcomes of [[true,true],[false,false],[true,false,true],[true,false,false],[false,true,true],[false,true,false]])
+for(const auto of [false,true]) for(const challengerSide of ['atk','def']) {
+  random=()=>.5;
+  b=setup([unit('A',3000),unit('ally',3000)],[unit('D',3000),unit('def ally',3000)]);
+  a=b.units[0];d=b.units[2];d.x=5;b.units[1].x=3;b.sel=a;b.auto=auto;
+  if(challengerSide==='def'){[a,d]=[d,a];b.sel=a;b.playerSide='def';b.side='def';}
+  let draws=0;
+  random=()=>{assert(draws<outcomes.length,'must stop rolling as soon as either officer wins twice');return outcomes[draws++]?0:.99;};
+  pendingTimers=[];p.doDuel(a,d);
+  assert.equal(draws,outcomes.length);
+  const winner=outcomes.filter(Boolean).length===2?a:d,loser=winner===a?d:a;
+  assert.equal(b.duelScene.winner,winner);assert.equal(b.duelScene.rounds.length,outcomes.length);
+  assert.equal(loser.troops,2700);assert.equal(loser.morale,55);assert.equal(winner.morale,90);
+  const applied=[a.troops,d.troops,a.morale,d.morale];
+  let aw=0,dw=0;
+  for(let i=0;i<outcomes.length;i++) {
+    if(outcomes[i])aw++;else dw++;
+    const scene=b.duelScene,html=els.bDuelScene.innerHTML,roundWinner=outcomes[i]?a:d;
+    assert.equal(scene.roundIndex,i);assert.equal(scene.rounds[i].winner,roundWinner);
+    assert(html.includes('3판 2승제 · '+(i+1)+'판'));
+    assert(html.includes(roundWinner.name+(i===outcomes.length-1?' 최종 승리!':' 이번 판 승리!')));
+    const left=a.side==='atk'?a:d,right=a.side==='def'?a:d;
+    assert(html.includes(left.name+' '+(left===a?aw:dw)+' : '+(right===a?aw:dw)+' '+right.name));
+    assert(b.busy);p.renderPanel();assert.equal(b.duelScene,scene);
+    Battle.act('auto');Battle.act('nextTurn');Battle.clickCell(d.x,d.y);
+    assert.equal(b.duelScene,scene);assert.equal(b.auto,auto);
+    assert.deepEqual([a.troops,d.troops,a.morale,d.morale],applied);
+    assert.equal(pendingTimers[0].ms,2400);pendingTimers.shift().fn();
+  }
+  assert.equal(b.duelScene,null);assert.equal(els.bDuelScene.innerHTML,'');
+  assert(b.log.some(line=>line.includes(winner.name+' 2:'+(outcomes.length-2)+' 승리!')));
+  pendingTimers=null;
+}
+random=()=>.5;
+b=setup();a=b.units[0];d=b.units[1];
+assert.equal(p.duelMatchWinChance(a,d),.5);
+a.officer.wu=90;d.officer.wu=80;
+const single=p.duelWinChance(a,d);
+assert.equal(p.duelMatchWinChance(a,d),single*single*(3-2*single));
+assert(p.duelMatchWinChance(a,d)>single,'best-of-three should favor the stronger officer more');
+assert(Math.abs(p.duelMatchWinChance(a,d)+p.duelMatchWinChance(d,a)-1)<1e-12);
+console.log('[OK] best-of-three sweeps and all deciding-round paths on both sides, per-round score/animation/input lock, one final penalty, match win probability');
+
 // Branch counters, terrain and generals must still affect otherwise equal armies.
 random = () => .5;
 b = setup(); a = b.units[0]; d = b.units[1];
@@ -211,6 +264,54 @@ d.branch = '보병'; b.terrain[d.y][d.x] = 2;
 assert(p.calcDamage(a, d) < plain, 'mountain defense has no effect');
 b.terrain[d.y][d.x] = 0; a.officer.wu = 100;
 assert(p.calcDamage(a, d) > plain, 'general quality has no effect');
+
+// Movement weakens outgoing attacks for both armies, but never the defender's counter.
+for (const side of ['atk', 'def']) for (const siege of [false, true]) for (const branch of ['보병', '기병', '궁병']) {
+  b=setup([unit('A',10000,branch)],[unit('D',10000,branch)]);
+  a=b.units.find(u=>u.side===side);d=b.units.find(u=>u!==a);
+  b.opts.siege=siege;b.cityDef=siege?50:0;
+  if(branch==='궁병')d.x=a.x+(side==='atk'?2:-2);
+  const standing=p.calcDamage(a,d),counter=p.calcDamage(d,a);
+  assert.equal(standing,rules.damage(a,d,{terrain:0,cityDef:d.side==='def'?b.cityDef:0,random:1,ranged:branch==='궁병'}));
+  a.moved=true;d.moved=true;
+  // The selected player's unit shows the cost before committing an attack.
+  b.sel=a;p.renderPanel();
+  assert(els.bUnit.innerHTML.includes('이번 턴 공격 피해 -20%'));
+  p.attackAct(a,d);
+  assert.equal(10000-d.troops,Math.round(standing*.8),'move-attack damage: '+side+'/'+siege+'/'+branch);
+  assert.equal(10000-a.troops,branch==='궁병'?0:Math.max(1,Math.round(counter*.45)),'counter must ignore prior movement');
+}
+b=setup();a=b.units[0];d=b.units[1];
+const beforeMove=p.calcDamage(a,d);a.moved=true;
+assert.equal(p.calcDamage(a,d),Math.round(beforeMove*.8));
+b.round++;p.roundStart();
+assert(!a.moved);assert.equal(p.calcDamage(a,d),beforeMove,'penalty must expire next round');
+
+// A mixed volley discounts each moving participant independently.
+for(const leaderMoved of [false,true])for(const mateMoved of [false,true]) {
+  b=setup([unit('leader',10000),unit('mate',10000)],[unit('target',10000)]);
+  const [leader,mate,target]=b.units;
+  Object.assign(leader,{x:4,y:4});Object.assign(mate,{x:5,y:3});Object.assign(target,{x:5,y:4});
+  const leaderBase=p.calcDamage(leader,target),mateBase=p.calcDamage(mate,target);
+  leader.moved=leaderMoved;mate.moved=mateMoved;
+  const leaderHit=leaderMoved?Math.round(leaderBase*.8):leaderBase;
+  const mateHit=mateMoved?Math.round(mateBase*.8):mateBase;
+  p.doVolley(leader,target);
+  assert.equal(10000-target.troops,leaderHit+Math.round(mateHit*.6),'mixed movement volley');
+}
+for(const moved of [false,true]) {
+  b=setup([unit('archer',10000,'궁병')],[unit('target',10000)]);[a,d]=b.units;
+  const base=p.calcDamage(a,d);a.moved=moved;p.doFireArrow(a,d);
+  assert.equal(10000-d.troops,Math.round((moved?Math.round(base*.8):base)*.85),'fire arrow direct hit');
+  assert.equal(d.burnRate,.05,'movement must not weaken ongoing burns');
+}
+b=setup([unit('cavalry',10000,'기병')],[unit('target',10000)]);[a,d]=b.units;
+a.x=3;d.x=4;
+const chargeBase=p.calcDamage({...a,x:5},d);
+p.doCharge(a,{x:5,y:4});
+assert(a.moved&&a.acted);
+assert.equal(10000-d.troops,Math.max(1,Math.round(chargeBase*.35)),'charge movement must retain its damage');
+console.log('[OK] move-attack -20% for both armies/field/siege/branches, round reset, mixed volleys, fire arrows, full counters and charges');
 
 // Small archers cannot attach full-strength percentage burns to a large target.
 b = setup([unit('A', 100, '궁병')], [unit('D', 10000)]); a = b.units[0]; d = b.units[1];
@@ -296,6 +397,50 @@ b=setup([unit('주유',3000)]);a=b.units[0];d=b.units[1];p.doStratAct(a,d,'화�
 b=setup();a=b.units[0];d=b.units[1];p.attackAct(a,d);const normalMorale=d.morale;
 b=setup([unit('장비',3000)]);a=b.units[0];d=b.units[1];p.attackAct(a,d);assert.equal(d.morale,normalMorale-3);
 console.log('[OK] actual unique-general actions');
+
+// Every selectable talent resolves through the same combat rules as historical holders.
+assert.equal(Object.keys(rules.talents).length,16);
+for(const skill of ['맹장','통솔']) {
+  const u=unit('시험',3000),target=unit('표적',3000),normal=rules.damage(u,target);
+  u.officer.skill=skill;assert(rules.damage(u,target)>normal,skill+' must increase damage');
+}
+for(const skill of ['철벽','통솔','침착']) {
+  const u=unit('시험',3000),target=unit('표적',3000),normal=rules.damage(u,target);
+  target.officer.skill=skill;assert(rules.damage(u,target)<normal,skill+' must reduce received damage');
+}
+for(const [label,talent] of Object.entries(rules.talents)) {
+  const u={...unit('신장수',3000),officer:{...officer('신장수'),custom:true,talent:label}};
+  assert.equal(rules.talent(u),talent);assert(rules.description(u.officer).includes(talent.desc));
+  assert(Object.values(rules.unique).includes(talent),label+' has no historical holder');
+}
+const customUnit=(talent,branch='보병')=>({...unit('신장수',3000,branch),officer:{...officer('신장수'),custom:true,talent}});
+random=()=>.5;b=setup([customUnit('신산')]);a=b.units[0];d=b.units[1];p.doStratAct(a,d,'혼란');assert(d.confused>0);
+b=setup();a=b.units[0];d=b.units[1];a.officer.skill='귀모';p.doStratAct(a,d,'혼란');assert(d.confused>0,'귀모 must improve actual spell success');
+b=setup([customUnit('기략')]);a=b.units[0];d=b.units[1];p.doStratAct(a,d,'혼란');assert(d.confused>0);
+random=()=>0;
+for(const talent of ['화공 도독','화공 명수']) {
+  b=setup([customUnit(talent)]);a=b.units[0];d=b.units[1];p.doStratAct(a,d,'화계');assert(3000-d.troops>genericFire);
+}
+for(const [talent,fear] of [['장판의 포효',3],['패왕',2]]) {
+  b=setup([customUnit(talent)]);a=b.units[0];d=b.units[1];p.attackAct(a,d);assert.equal(d.morale,normalMorale-fear);
+}
+for(const [talent,rally] of [['무신의 위엄',8],['선봉장',5],['독려',5],['불굴',6]]) {
+  b=setup([customUnit(talent),unit('ally',3000)]);a=b.units[0];d=b.units[2];d.x=a.x;d.y=a.y+1;b.units[1].morale=40;
+  p.doDuel(a,d);assert.equal(b.units[1].morale,40+rally);
+}
+const ally=unit('아군',3000),commander=customUnit('난세의 지휘'),lesser=customUnit('독려');
+assert.equal(rules.bonuses(ally,[ally,commander,lesser]).atk,1.08,'command auras must not stack');
+assert.equal(rules.bonuses(ally,[ally,lesser]).atk,1.06,'weaker aura must use its own value');
+assert.equal(rules.bonuses(commander,[commander]).atk,1,'command does not buff its source');
+commander.troops=999;assert.equal(rules.bonuses(ally,[ally,commander]).atk,1,'small units cannot command');
+let normalCharge;
+for(const talent of ['', '비장','백마 선봉','선봉장']) {
+  b=setup([customUnit(talent,'기병')]);a=b.units[0];d=b.units[1];a.x=3;d.x=4;
+  const option=p.chargeOptions(a).find(o=>o.x===5&&o.y===4);assert(option);
+  p.doCharge(a,option);const damage=3000-d.troops;
+  if(!talent)normalCharge=damage;else assert(damage>normalCharge,talent+' must improve actual charge damage');
+}
+console.log('[OK] custom talents: actual confusion, fire, fear, rally and charges; nonstacking auras and all catalog assignments');
 
 // A single surviving unit can capture the forts in sequence, and defenders can recapture flags.
 b=setup();b.opts.siege=true;a=b.units[0];d=b.units[1];d.x=12;

@@ -42,6 +42,37 @@ assert.equal(q.gain,1);assert(q.cost>0&&q.cost<60,'near-cap improvements must be
 c.agri=100;assert(!d.adminQuote(c,'agri',[o.name]).ok);
 console.log('[OK] priced development, diminishing teams, exact live quote, affordability/no-op guards, cap proration');
 
+// Specialties affect their actual command, including sorting and AI execution.
+for(const [skill,stat] of [['농정','agri'],['상재','comm'],['축성','def'],['인덕','order'],['명망','order'],['경세','order']]) {
+  g=fresh();c=g.cities['허창'];o=g.officers.find(o=>o.name==='조인');
+  Object.assign(o,{pol:80,zhi:80,skill:''});
+  Object.assign(c,{agri:10,comm:10,def:10,order:10});
+  const normal=d.adminQuote(c,stat,[o.name]).gain,other=stat==='agri'?'comm':'agri';
+  const otherNormal=d.adminQuote(c,other,[o.name]).gain;
+  o.skill=skill;const boosted=d.adminQuote(c,stat,[o.name]);
+  assert(boosted.gain>normal,skill+' must improve its command');
+  assert.equal(d.adminQuote(c,other,[o.name]).gain,skill==='경세'?9:otherNormal,skill+' must respect its scope');
+  // Limit available administrators so a lower-stat specialist outranks the generalist.
+  const rival=g.officers.find(o=>o.name==='순욱');Object.assign(rival,{pol:85,zhi:85,skill:''});
+  for(const candidate of g.officers)if(candidate!==o&&candidate!==rival)candidate.used=true;
+  Game.cmdAdmin(c.name,stat);assert.equal(g.ui.pick.list[0],o.name);
+  Game.closeModal();
+  const before=c[stat];d.execAIAct('cao',{t:'admin',cn:c.name,stat},noop);
+  assert(o.used&&!rival.used,skill+' must be used by AI');assert.equal(c[stat]-before,boosted.gain);
+}
+function training(skill) {
+  g=fresh();c=g.cities['허창'];o=g.officers.find(o=>o.name==='조인');Object.assign(o,{wu:100,skill});
+  c.training=c.morale=10;Game.cmdTrain(c.name);pick(o.name);return [c.training,c.morale];
+}
+const plainTraining=training(''),specialTraining=training('교련');
+assert(specialTraining.every((v,i)=>v>plainTraining[i]),'교련 must improve both training and morale');
+for(const skill of ['모병','명망','인덕']) {
+  g=fresh();c=g.cities['허창'];c.troops=0;o=g.officers.find(o=>o.name==='조인');Object.assign(o,{skill:'',cha:80});
+  const normal=d.recruitQuote(c,o,'conscript').amount;o.skill=skill;
+  assert(d.recruitQuote(c,o,'conscript').amount>normal,skill+' must improve recruitment');
+}
+console.log('[OK] specialized development/repair/order, command ranking, shared AI execution, training/morale and recruitment effects');
+
 const recruitment = {};
 for (const mode of ['conscript','levy']) {
   g=fresh();c=g.cities['허창'];f=g.factions.cao;

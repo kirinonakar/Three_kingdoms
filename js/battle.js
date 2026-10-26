@@ -389,7 +389,7 @@ const Battle = (function () {
     if(!B || B.over || !u || !u.alive) {el.hidden=true;return;}
     const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const o=u.officer,sk=SKILLS[o.skill],army=B.opts[u.side];
-    const statuses=[u.acted?'행동 완료':u.moved?'이동 완료 · 공격 가능':'미행동'];
+    const statuses=[u.acted?'행동 완료':u.moved?'이동 완료 · 공격 피해 -20%':'미행동'];
     if(isConfused(u))statuses.push('혼란');if(u.burn>0)statuses.push('화상 '+u.burn+'일');
     const face=portraitFace(u.name), sideTxt=(u.side===B.playerSide?'아군':'적군')+' · '+escape(army.name)+'군';
     const head=face
@@ -597,6 +597,13 @@ const Battle = (function () {
     const wait = Math.max(160, Math.round((ms || 260) * (fast ? 0.62 : 1)));
     setTimeout(() => {
       if (B !== battle || B.over) return;
+      const scene = B.duelScene;
+      if (scene && scene.roundIndex + 1 < scene.rounds.length) {
+        B.duelScene = { ...scene, roundIndex: scene.roundIndex + 1 };
+        sfx('duel');
+        afterAction(DUEL_SCENE_MS);
+        return;
+      }
       B.duelScene = null;
       renderDuelScene();
       B.busy = false;
@@ -776,7 +783,7 @@ const Battle = (function () {
     opt.through.forEach((p, i) => {
       const foe = p.unit;
       if (!foe || !foe.alive) return;
-      const dmg = Math.max(1, Math.round(calcDamage(u, foe) * CHARGE_RATE * (CombatRules.talent(u).charge || 1)));
+      const dmg = Math.max(1, Math.round(calcDamage(u, foe, undefined, 'charge') * CHARGE_RATE * (CombatRules.talent(u).charge || 1)));
       foe.troops = Math.max(0, foe.troops - dmg);
       foe.morale = cl(foe.morale - Math.round(ri(2, 6) * tacticalScale(u)), 0, 100);
       fx('slash', u, foe, { delay: ride + 60 + i * 180 });
@@ -915,7 +922,8 @@ const Battle = (function () {
     return B.units.filter(t => t.alive && t.side !== u.side && stratRange(u, t));
   }
 
-  function calcDamage(a, d, random = rnd(.8,1.2)) {
+  const MOVED_ATTACK_RATE = 0.8; // 같은 턴의 일반 이동 후 공격 피해 20% 감소
+  function calcDamage(a, d, random = rnd(.8,1.2), kind = 'attack') {
     // 성벽의 활은 원래 병과의 근접 공격력·상성·기병 진형 보너스를 쓰지 않는다.
     // 같은 장수·병력·훈련·사기·진형의 일반 궁병과 같은 피해로 계산한다.
     const attacker = a.branch !== '궁병' && mdist(a, d) === 2 && fortCanShoot(a)
@@ -923,9 +931,11 @@ const Battle = (function () {
     // AI가 이동·돌격 도착 위치를 가정할 때도 지휘 효과의 자신/동료 구분을 유지한다.
     const alliesA=alive(a.side).map(u => u.officer === a.officer ? attacker : u);
     const alliesD=alive(d.side).map(u => u.officer === d.officer ? d : u);
-    return CombatRules.damage(attacker,d,{terrain:B.terrain[d.y][d.x],cityDef:d.side==='def'?B.cityDef:0,
+    const damage = CombatRules.damage(attacker,d,{terrain:B.terrain[d.y][d.x],cityDef:d.side==='def'?B.cityDef:0,
       random,ranged:mdist(a,d)>1,alliesA,alliesD,
       nearbyA:alliesA.filter(u=>mdist(u,a)<=2),nearbyD:alliesD.filter(u=>mdist(u,d)<=2)});
+    // 일제공격·불화살·AI의 이동 후보도 같은 규칙을 쓴다. 반격과 돌격은 별도 행동이다.
+    return a.moved && kind === 'attack' ? Math.max(1, Math.round(damage * MOVED_ATTACK_RATE)) : damage;
   }
 
   // 궁병이 아닌 부대가 근접 공격하면 상대의 반격을 받는다
@@ -944,7 +954,7 @@ const Battle = (function () {
     const noCounter = counterOk && (d.confused > 0 || d.confusedNow);
     const fortCover = B.terrain[a.y][a.x] === 3;
     const back = (counterOk && !noCounter)
-      ? Math.max(1, Math.round(calcDamage(d, a) * COUNTER_RATE * (fortCover ? FORT_COUNTER_TAKEN : 1))) : 0;
+      ? Math.max(1, Math.round(calcDamage(d, a, undefined, 'counter') * COUNTER_RATE * (fortCover ? FORT_COUNTER_TAKEN : 1))) : 0;
     const counterImpact = tacticalScale(d);
     d.troops = Math.max(0, d.troops - dmg);
     d.morale = cl(d.morale - Math.round(ri(3, 8) * tacticalScale(a)), 0, 100);
@@ -978,6 +988,10 @@ const Battle = (function () {
     const sa = SKILLS[a.officer.skill] || {}, sd = SKILLS[d.officer.skill] || {};
     return cl(0.5 + (a.officer.wu - d.officer.wu) * 0.012 + (sa.duel || 0) - (sd.duel || 0) + (CombatRules.talent(a).duel || 0) - (CombatRules.talent(d).duel || 0), 0.08, 0.92);
   }
+  function duelMatchWinChance(a, d) {
+    const p = duelWinChance(a, d);
+    return p * p * (3 - 2 * p);
+  }
   function duelMoraleLoss(winner) { return Math.round(25 * tacticalScale(winner)); }
   function doDuel(a, d) {
     if (!B || B.over || B.duelRequest || !a.alive || !d.alive || a.acted || !duelTargets(a).includes(d)) return;
@@ -1006,7 +1020,14 @@ const Battle = (function () {
       afterAction(820);
       return;
     }
-    const win = Math.random() < duelWinChance(a, d);
+    const chance = duelWinChance(a, d), rounds = [];
+    let attackerWins = 0, defenderWins = 0;
+    while (attackerWins < 2 && defenderWins < 2) {
+      const won = Math.random() < chance;
+      if (won) attackerWins++; else defenderWins++;
+      rounds.push({ winner: won ? a : d, attackerWins, defenderWins });
+    }
+    const win = attackerWins === 2;
     const w = win ? a : d, l = win ? d : a;
     const impact = tacticalScale(w);
     const loss = Math.round(l.troops * 0.10 * impact);
@@ -1017,10 +1038,11 @@ const Battle = (function () {
     const rally=CombatRules.talent(w).rally||0;
     if(rally) {alive(w.side).filter(x=>x!==w&&mdist(x,w)<=2).forEach(x=>{x.morale=cl(x.morale+Math.round(rally*impact),0,100);});bLog('관우의 무신의 위엄 — 인접 아군 사기 상승');}
     a.acted = true;
-    B.duelScene = { attacker: a, defender: d, winner: w };
+    B.duelScene = { attacker: a, defender: d, winner: w, rounds, roundIndex: 0 };
     fx('duel', a, d);
     B.floats.push({ x: l.x, y: l.y, text: '일기토 패!' });
-    bLog('⚔ 일기토! ' + a.name + '(' + a.officer.wu + ') vs ' + d.name + '(' + d.officer.wu + ') → ' + w.name + ' 승리! ' +
+    bLog('⚔ 일기토 (3판 2승제)! ' + a.name + '(' + a.officer.wu + ') vs ' + d.name + '(' + d.officer.wu + ') → ' + w.name + ' ' +
+      Math.max(attackerWins, defenderWins) + ':' + Math.min(attackerWins, defenderWins) + ' 승리! ' +
       l.name + ' 병력 -' + commas(loss) + ', 사기 -' + moraleLoss);
     sfx('duel');
     checkAlive(l);
@@ -1257,7 +1279,7 @@ const Battle = (function () {
   }
   function aiCounterCost(u, d) {
     if (u.branch === '궁병' || isConfused(d) || !meleeReachable(d, u)) return 0;
-    return aiImpact(u, calcDamage(d, u, 1) * COUNTER_RATE *
+    return aiImpact(u, calcDamage(d, u, 1, 'counter') * COUNTER_RATE *
       (B.terrain[u.y][u.x] === 3 ? FORT_COUNTER_TAKEN : 1), 2.5 * tacticalScale(d));
   }
   function aiAttackScore(u, d) {
@@ -1271,7 +1293,7 @@ const Battle = (function () {
       (d.morale < 25 ? 3 : d.morale < 45 ? 1.7 : .4);
   }
   function aiDuelScores(a, d) {
-    const chance = duelWinChance(a, d);
+    const chance = duelMatchWinChance(a, d);
     const rally = w => alive(w.side).filter(x => x !== w && !x.dying && mdist(x, w) <= 2)
       .reduce((sum, x) => sum + aiRallyScore(w, x,
         Math.min(100 - x.morale, Math.round((CombatRules.talent(w).rally || 0) * tacticalScale(w)))), 0);
@@ -1286,7 +1308,7 @@ const Battle = (function () {
     const scores = aiDuelScores(a, d);
     // 도주하는 거부보다 승리할 여지가 있는 수락을 택한다.
     if (d.morale <= duelMoraleLoss(a) * 2) return true;
-    return duelWinChance(d, a) >= .25 && scores.accept <= scores.refuse;
+    return duelMatchWinChance(d, a) >= .25 && scores.accept <= scores.refuse;
   }
   function aiExposure(u, point) {
     const projected = { ...u, x: point.x, y: point.y };
@@ -1367,7 +1389,7 @@ const Battle = (function () {
         if (dest.through.some(p => !valid(p.unit))) continue;
         const projected = { ...u, x: dest.x, y: dest.y };
         const score = dest.through.reduce((sum, p) => sum + aiImpact(p.unit,
-          calcDamage(projected, p.unit, 1) * CHARGE_RATE * (CombatRules.talent(u).charge || 1), 4 * tacticalScale(u)), 0);
+          calcDamage(projected, p.unit, 1, 'charge') * CHARGE_RATE * (CombatRules.talent(u).charge || 1), 4 * tacticalScale(u)), 0);
         offer('charge', dest, score * .94 - Math.max(0, aiExposure(u, dest) - exposure) * .65);
       }
     }
@@ -3389,9 +3411,12 @@ const Battle = (function () {
     // 일기토 신청 순서와 관계없이 전투 공격군은 왼쪽, 수비군은 오른쪽에 둔다.
     const left = scene.attacker.side === 'atk' ? scene.attacker : scene.defender;
     const right = scene.attacker.side === 'def' ? scene.attacker : scene.defender;
+    const round = scene.rounds[scene.roundIndex];
+    const final = scene.roundIndex === scene.rounds.length - 1;
+    const wins = u => u === scene.attacker ? round.attackerWins : round.defenderWins;
     const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const card = (u, side) => {
-      const won = u === scene.winner, src = u.officer.portrait || portraitSource(u.name);
+      const won = u === round.winner, src = u.officer.portrait || portraitSource(u.name);
       return '<div class="duel-fighter ' + side + (won ? ' winner' : ' loser') + '">' +
         '<div class="duel-photo">' + (src ? '<img src="' + escape(src) + '" alt="' + escape(u.name) + ' 초상화" draggable="false">' :
           '<span class="duel-initial" aria-hidden="true">' + escape(u.name.charAt(0)) + '</span>') + '</div>' +
@@ -3399,10 +3424,11 @@ const Battle = (function () {
         '<span class="duel-verdict">' + (won ? '승리' : '패배') + '</span></div>';
     };
     el.innerHTML = '<div class="duel-scene" style="--duel-duration:' + DUEL_SCENE_MS + 'ms">' +
-      '<div class="duel-stage"><div class="duel-heading">一騎討 <span>일기토</span></div>' +
+      '<div class="duel-stage"><div class="duel-heading">一騎討 <span>3판 2승제 · ' + (scene.roundIndex + 1) + '판</span></div>' +
       '<div class="duel-fighters">' + card(left, 'left') + card(right, 'right') +
       '<span class="duel-impact" aria-hidden="true">⚔</span></div>' +
-      '<div class="duel-result" role="status">' + escape(scene.winner.name) + ' 승리!</div></div></div>';
+      '<div class="duel-result" role="status">' + escape(round.winner.name) + (final ? ' 최종 승리!' : ' 이번 판 승리!') +
+      '<div class="duel-score">' + escape(left.name) + ' ' + wins(left) + ' : ' + wins(right) + ' ' + escape(right.name) + '</div></div></div></div>';
   }
 
   function renderDuelPrompt() {
@@ -3417,7 +3443,7 @@ const Battle = (function () {
     const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const loss = duelMoraleLoss(attacker) * 2;
     const html = '<div class="modal-bg top"><div class="modal duel-prompt" role="dialog" aria-modal="true" aria-labelledby="bDuelTitle" aria-describedby="bDuelCost">' +
-      '<h2 id="bDuelTitle">일기토 신청</h2><p>' + escape(attacker.name) + ' 장수가 일기토를 신청했습니다.</p>' +
+      '<h2 id="bDuelTitle">일기토 신청</h2><p>' + escape(attacker.name) + ' 장수가 일기토를 신청했습니다. 3판 2승제로 먼저 2승을 거두면 승리합니다.</p>' +
       '<table class="duel-compare"><thead><tr><th scope="col">정보</th><th scope="col">공격군 · ' + label(left) + '</th><th scope="col">수비군 · ' + label(right) + '</th></tr></thead><tbody>' +
       '<tr><th scope="row">무장</th><td>' + escape(left.name) + '</td><td>' + escape(right.name) + '</td></tr>' +
       '<tr><th scope="row">무력</th><td>' + left.officer.wu + '</td><td>' + right.officer.wu + '</td></tr>' +
@@ -3522,7 +3548,7 @@ const Battle = (function () {
           // 안내 문구 슬롯은 항상 2줄 고정 — 문구가 나타났다 사라져도 아래 버튼이 움직이지 않는다
           '<div class="hints">' +
             '<div class="hint">' + (isConfused(u) ? '혼란 상태 — 이동·공격·계략·일기토·진형 불가 (반격도 불가)' :
-              (!u.acted && u.moved ? '이동 완료 — 같은 턴에 공격할 수 있습니다.' : '')) + '</div>' +
+              (!u.acted && u.moved ? '이동 완료 — 이번 턴 공격 피해 -20%' : '')) + '</div>' +
             '<div class="hint">' + (clicks.length ? '클릭으로 바로 행동 — ' + clicks.join(' · ') : '') + '</div>' +
           '</div>';
       }
