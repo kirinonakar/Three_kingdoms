@@ -76,7 +76,7 @@ const CustomOfficers = (() => {
         (o.portrait ? '<img class="custom-thumb" src="' + o.portrait + '" alt="' + html(o.name) + ' 초상화">' : '<span class="custom-thumb custom-initial" aria-hidden="true">' + html(o.name[0]) + '</span>') +
         '<div class="custom-info"><b>' + html(o.name) + '</b><p>' + html(o.city) + ' · ' + (o.ruler ? '군주 교체' : '일반 무장') + ' · ' + html(o.skill || '특기 없음') + ' · ' + html(o.talent || '전투 속성 없음') + '</p><p>무 ' + o.wu + ' · 지 ' + o.zhi + ' · 정 ' + o.pol + ' · 매 ' + o.cha + ' · 의리 ' + o.honor + '</p></div>' +
         '<div class="custom-actions"><button onclick="CustomOfficers.edit(' + i + ')">수정</button>' + (!atTitle ? '<button onclick="CustomOfficers.deploy(' + i + ')">배치</button>' : '') + '<button onclick="CustomOfficers.remove(' + i + ')">삭제</button></div></article>').join('') || '<p class="muted">아직 등록한 신무장이 없습니다.</p>') + '</div>' +
-      '<p class="muted">사진도 JSON에 포함됩니다. 등록부 삭제·가져오기는 이미 진행 중인 게임의 무장을 변경하지 않습니다.</p>' +
+      '<p class="muted">사진도 JSON에 포함됩니다. 신무장 삭제 가져오기는 이미 진행 중인 게임의 무장을 변경하지 않습니다.</p>' +
       '<div class="foot"><button onclick="CustomOfficers.leave()">' + (atTitle ? '시작 화면으로' : '닫기') + '</button></div>', {closable:false});
   }
   function edit(index) {
@@ -108,7 +108,7 @@ const CustomOfficers = (() => {
           return '<option value="' + html(c[0]) + '"' + (c[0] === o.city ? ' selected' : '') + '>' + html(c[0] + ' · ' + name) + '</option>';
         }).join('') + '</select><label class="custom-ruler"><input id="customRuler" type="checkbox"' + (o.ruler ? ' checked' : '') + '> 이 도시 소유 세력의 군주를 교체</label>' +
         '<p class="muted">군주가 되면 충성도 100, 세력명은 신무장 이름으로 바뀝니다. 새 게임은 선택한 시나리오의 도시 소유 세력을 따릅니다.</p></div></div>' +
-        '<div class="foot"><button type="button" onclick="CustomOfficers.open(' + atTitle + ')">취소</button><button id="customSubmit" type="submit" class="primary">등록부 저장</button></div></form>', {closable:false});
+        '<div class="foot"><button type="button" onclick="CustomOfficers.open(' + atTitle + ')">취소</button><button id="customSubmit" type="submit" class="primary">저장</button></div></form>', {closable:false});
     } catch (e) { toast(e.message); }
   }
   function updateTraits() {
@@ -152,13 +152,13 @@ const CustomOfficers = (() => {
       if (index < 0 && list.some(p => p.name === o.name)) throw Error('이미 등록한 이름입니다');
       if (index < 0) list.push(o); else list[index] = o;
       if (atTitle) checkAssignments(list,scenarioCities(scenario()));
-      write(list); photoEpoch++; render(); toast('등록부에 저장했습니다' + (atTitle ? ' · 새 게임 시작 시 반영됩니다' : ' · [배치]를 눌러 현재 게임에 반영하세요'));
+      write(list); photoEpoch++; render(); toast('저장했습니다' + (atTitle ? ' · 새 게임 시작 시 반영됩니다' : ' · [배치]를 눌러 현재 게임에 반영하세요'));
     } catch (e) { toast('등록 실패: ' + e.message); }
   }
   function remove(index) {
     if (!guard()) return;
     try { const list = read(), o = list[index]; if (!o) return;
-      if (!confirm(o.name + '을(를) 등록부에서 삭제할까요? 현재 게임에 배치된 무장은 유지됩니다.')) return;
+      if (!confirm(o.name + '을(를) 신무장 목록에서 삭제할까요? 현재 게임에 배치된 무장은 유지됩니다.')) return;
       list.splice(index,1); write(list); render();
     } catch (e) { toast('삭제 실패: ' + e.message); }
   }
@@ -211,14 +211,14 @@ const CustomOfficers = (() => {
       if (atTitle) checkAssignments(merged,scenarioCities(scenario()));
       pending = merged;
       showModal('<h3>신무장 JSON 가져오기</h3><p>' + imported.length + '명 · 새 등록 ' + (imported.length-duplicates) + '명 · 같은 이름 갱신 ' + duplicates + '명</p>' +
-        '<p>' + imported.map(o => html(o.name)).join(' · ') + '</p><p class="muted">사진·능력치·특기·전투 속성·배속 설정을 등록부에 합칩니다. 현재 게임에는 [배치]로 반영하세요.</p>' +
-        '<div class="foot"><button onclick="CustomOfficers.open(' + atTitle + ')">취소</button><button class="primary" onclick="CustomOfficers.confirmImport()">등록부에 가져오기</button></div>',{closable:false});
+        '<p>' + imported.map(o => html(o.name)).join(' · ') + '</p><p class="muted">사진·능력치·특기·전투 속성·배속 설정을 신무장 목록에 합칩니다. 현재 게임에는 [배치]로 반영하세요.</p>' +
+        '<div class="foot"><button onclick="CustomOfficers.open(' + atTitle + ')">취소</button><button class="primary" onclick="CustomOfficers.confirmImport()">신무장 가져오기</button></div>',{closable:false});
       return true;
     } catch (e) { pending = null; toast('가져오기 실패: ' + e.message); return false; }
   }
   function confirmImport() {
     if (!pending || !guard()) return;
-    try { write(pending); pending = null; render(); toast('신무장 등록부를 가져왔습니다'); }
+    try { write(pending); pending = null; render(); toast('신무장을 가져왔습니다'); }
     catch (e) { toast('가져오기 실패: ' + e.message); }
   }
   function importFile() {
