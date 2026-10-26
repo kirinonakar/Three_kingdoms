@@ -2,7 +2,7 @@
 // Exercise registration, photo processing and game/save integration without computer use.
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const assert = require('node:assert/strict');
-const noop = () => {}, store = {}, els = {}, classes = new Set(), downloads = [], blobs = [], draws = [];
+const noop = () => {}, store = {}, els = {}, classes = new Set(), downloads = [], blobs = [], draws = [], photoCanvases = [];
 let quota = false, confirmed = true, nextUrl = 0;
 const photo = 'data:image/jpeg;base64,/9j/2Q==';
 const canvas = new Proxy({}, {get:(o,k) => k in o ? o[k] : noop, set:(o,k,v) => (o[k]=v,true)});
@@ -11,7 +11,10 @@ const el = id => els[id] ||= {innerHTML:'',textContent:'',value:'',checked:false
 const sandbox = {console, Blob, queueMicrotask,
   document:{getElementById:el,querySelectorAll:()=>[],body:{classList:{add:c=>classes.add(c),remove:c=>classes.delete(c),contains:c=>classes.has(c)}},
     createElement(tag) {
-      if (tag === 'canvas') return {getContext:()=>({fillRect:noop,drawImage:(...args)=>draws.push(args)}),toDataURL:()=>photo};
+      if (tag === 'canvas') {
+        const node = {getContext:()=>({fillRect:noop,drawImage:(...args)=>draws.push(args)}),toDataURL:()=>photo};
+        photoCanvases.push(node); return node;
+      }
       const node = {click:()=>downloads.push(node)}; return node;
     }},
   Image:class {constructor(){this.naturalWidth=600;this.naturalHeight=800;}set src(value){queueMicrotask(()=>this.onload());}},
@@ -65,7 +68,9 @@ async function main() {
   }
   form(profile());
   await C.selectPhoto({files:[{type:'image/jpeg',size:1000}]});
-  assert.deepEqual(draws[0].slice(1),[0,0,600,600,0,0,256,256]);
+  assert.equal(photoCanvases[0].width,512);
+  assert.equal(photoCanvases[0].height,512);
+  assert.deepEqual(draws[0].slice(1),[0,0,600,600,0,0,512,512]);
   assert.match(el('customPhotoPreview').innerHTML,/data:image\/jpeg/);
   C.saveForm(); assert.equal(d.read().length,1); assert.equal(d.read()[0].portrait,photo);
   assert.equal(d.read()[0].honor,65);

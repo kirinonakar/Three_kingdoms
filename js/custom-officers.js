@@ -1,7 +1,7 @@
 /* 신무장 원본은 게임 저장과 별도로 보관한다. 게임에 배치한 뒤에는 게임 상태가 독립한다. */
 'use strict';
 const CustomOfficers = (() => {
-  const KEY = 'sangokji_custom_officers_v1', MAX = 20, PHOTO_MAX = 65536;
+  const KEY = 'sangokji_custom_officers_v1', MAX = 20, PHOTO_SIZE = 512, PHOTO_MAX = 65536;
   let atTitle = true, editing = null, photo = '', photoBusy = false, photoEpoch = 0, pending = null;
   const html = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const safeName = name => typeof name === 'string' && name === name.trim() && !Object.hasOwn(Object.prototype,name) && name !== 'prototype' && /^[\p{L}\p{N} .·_-]{1,20}$/u.test(name);
@@ -92,7 +92,7 @@ const CustomOfficers = (() => {
       showModal('<h3>' + (editing ? '신무장 수정' : '새 무장 등록') + '</h3><form id="customForm" onsubmit="event.preventDefault();CustomOfficers.saveForm()">' +
         '<div class="custom-editor"><div class="custom-photo"><div id="customPhotoPreview">' + previewHtml() + '</div>' +
         '<label for="customPhoto">사진 선택 (JPG · PNG · WebP)</label><input id="customPhoto" type="file" accept="image/jpeg,image/png,image/webp" onchange="CustomOfficers.selectPhoto(this)">' +
-        '<button type="button" onclick="CustomOfficers.clearPhoto()">사진 제거</button><p class="muted">최대 10MB · 사진 위쪽을 기준으로 정사각형으로 잘라 저장합니다.</p></div>' +
+        '<button type="button" onclick="CustomOfficers.clearPhoto()">사진 제거</button><p class="muted">최대 10MB · 사진 위쪽을 기준으로 정사각형으로 잘라 512×512로 저장합니다.</p></div>' +
         '<div class="custom-fields"><label for="customName">이름</label><input id="customName" maxlength="20" required value="' + html(o.name) + '"' + (editing ? ' readonly' : '') + ' placeholder="신무장 이름">' +
         '<div class="custom-stats">' + [['wu','무력'],['zhi','지력'],['pol','정치'],['cha','매력']].map(([key,label]) => '<label for="custom-' + key + '">' + label + '<input id="custom-' + key + '" type="number" required min="1" max="100" step="1" value="' + o[key] + '"></label>').join('') + '</div>' +
         '<label for="customHonor">의리 (0~100)</label><input id="customHonor" type="number" required min="0" max="100" step="1" value="' + o.honor + '">' +
@@ -130,10 +130,10 @@ const CustomOfficers = (() => {
       await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = () => reject(Error('사진을 읽을 수 없습니다')); img.src = url; });
       if (token !== photoEpoch) return;
       if (!img.naturalWidth || !img.naturalHeight || img.naturalWidth * img.naturalHeight > 40000000) throw Error('사진은 4천만 화소 이하여야 합니다');
-      const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+      const cv = document.createElement('canvas'); cv.width = cv.height = PHOTO_SIZE;
       const ctx = cv.getContext('2d'), side = Math.min(img.naturalWidth, img.naturalHeight);
-      ctx.fillStyle = '#1c271f'; ctx.fillRect(0,0,256,256);
-      ctx.drawImage(img,(img.naturalWidth-side)/2,0,side,side,0,0,256,256);
+      ctx.fillStyle = '#1c271f'; ctx.fillRect(0,0,PHOTO_SIZE,PHOTO_SIZE);
+      ctx.drawImage(img,(img.naturalWidth-side)/2,0,side,side,0,0,PHOTO_SIZE,PHOTO_SIZE);
       let src = cv.toDataURL('image/jpeg', .82);
       if (src.length > PHOTO_MAX) src = cv.toDataURL('image/jpeg', .55);
       if (!validPhoto(src)) throw Error('사진 용량을 줄일 수 없습니다. 다른 사진을 선택하세요');
