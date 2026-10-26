@@ -64,6 +64,28 @@ function validateSave(data) {
     }
   }
   data.leaders=leaders;
+  if(data.stats!==undefined) {
+    const s=data.stats,object=v=>v&&typeof v==='object'&&!Array.isArray(v);
+    const count=(v,max=1e7)=>finite(v,0,max)&&Number.isInteger(v);
+    if(!object(s)||!count(s.since,data.turn||0)||typeof s.partial!=='boolean'||typeof s.assisted!=='boolean'||
+      !object(s.factions)||Object.keys(s.factions).length!==fids.size||!Array.isArray(s.battles)||s.battles.length>30)throw Error('전역 통계가 잘못되었습니다');
+    const factions={};
+    for(const [id,r] of Object.entries(s.factions)) {
+      if(!fids.has(id)||!object(r)||!count(r.wins)||!count(r.losses)||!count(r.peak,canonical.size)||!object(r.merit)||Object.keys(r.merit).length>names.size)throw Error('세력 전적이 잘못되었습니다');
+      const merit={};
+      for(const [name,points] of Object.entries(r.merit)) {
+        if(!names.has(name)||!count(points,r.wins))throw Error('무장 전공이 잘못되었습니다');
+        merit[name]=points;
+      }
+      factions[id]={wins:r.wins,losses:r.losses,peak:r.peak,merit};
+    }
+    const battles=s.battles.map(b=>{
+      if(!object(b)||!count(b.turn,data.turn||0)||!canonical.has(b.city)||!fids.has(b.atk)||!fids.has(b.def)||b.atk===b.def||
+        ![b.atk,b.def].includes(b.winner)||typeof b.unopposed!=='boolean')throw Error('전투 기록이 잘못되었습니다');
+      return {turn:b.turn,city:b.city,atk:b.atk,def:b.def,winner:b.winner,unopposed:b.unopposed};
+    });
+    data.stats={since:s.since,partial:s.partial,assisted:s.assisted,factions,battles};
+  }
   if(data.goal) {
     if(!['unification','hegemony','challenge','scenario'].includes(data.goal.type))throw Error('승리 목표가 잘못되었습니다');
     if(data.goal.targets&&(!Array.isArray(data.goal.targets)||data.goal.targets.some(n=>!canonical.has(n))))throw Error('목표 도시가 잘못되었습니다');

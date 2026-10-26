@@ -4,7 +4,7 @@
 'use strict';
 const SAVE_KEY = 'sangokji_save_v1';        // 구버전 단일 슬롯 — 자동저장 슬롯 1로 옮긴다
 const SAVE_SLOTS = 3;                       // 수동 3개 + 자동 3개를 별도로 보관한다
-const SAVE_VERSION = 7;
+const SAVE_VERSION = 8;
 const saveSlotKey = (n, kind = 'auto') => SAVE_KEY + (kind === 'manual' ? '_manual_slot' : '_slot') + n;
 const saveMetaKey = (n, kind = 'auto') => SAVE_KEY + (kind === 'manual' ? '_manual_meta' : '_meta') + n;
 const GRACE_TURNS = 2;      // 초반 2개월은 AI가 플레이어 도시를 공격하지 않는다
@@ -629,6 +629,7 @@ function setFullDelegation(on) {
   }
   if (!strategyReady()) return;
   G.fullDelegation = !!on;
+  if(on)ensureCampaignStats().assisted=true;
   G.autoPaused = false;
   clearAutoPlay();
   G.ui = {};
@@ -738,6 +739,7 @@ function newGame(pf, scenarioId = '194') {
   if(scenario.rosters) assignScenarioRosters(scenario);      // 15군웅처럼 편성표를 직접 지정한 시나리오
   else if(scenario.owners) distributeScenarioOfficers(scenario);
   if (typeof CustomOfficers !== 'undefined') CustomOfficers.applyNewGame(G);
+  ensureCampaignStats(false);
   // 시작 비축은 실제 주둔군의 6개월 소비량. 후대 대세력에도 같은 기준을 쓴다.
   Object.values(factions).forEach(f => {
     const upkeep = factionCities(f.id).reduce((s, n) => s + cityFoodUpkeep(cities[n]), 0);
@@ -2717,6 +2719,7 @@ function renderCityPanel() {
     const adjacent = c.links.some(n => G.cities[n].owner === G.pf);
     const canAtk = c.links.some(n => G.cities[n].owner === G.pf && G.cities[n].troops >= 1000 && availableOfficers(n).length);
     colB += '<div class="enemy-note">' + (canAtk ? '인접한 내 도시에서 <b>출진</b>할 수 있습니다.' : (adjacent ? '인접한 내 도시에 출진 가능한(이번 달 미행동) 무장이 없습니다.' : '인접한 내 도시가 없어 공격할 수 없습니다.')) + '</div>';
+    if(canAtk)colB+=cityAttackForecast(c.name);
     if (canAtk) dock = '<div class="cmd-dock"><div class="city-command-heading"><b>' + c.name + '</b><span>출진 대상</span></div><div class="cmdgroup"><span class="cg-label">군사</span><div class="cmds c2"><button class="cmd"' +
       (noCmd ? ' disabled title="명령권이 부족합니다"' : ' title="이 도시로 출진합니다 (명령 1)"') +
       ' onclick="Game.cmdAttackFrom(\'' + c.name + '\')"><i class="ico">攻</i><span>이 도시 공격</span></button></div></div></div>';
@@ -3241,7 +3244,7 @@ function cmdAttackFrom(target) {
   if (!froms.length) { toast('출진 가능한 인접 아군 도시가 없습니다 (이번 달 미행동 무장·병력 필요)'); return; }
   const rows = froms.map(c => '<div class="row" role="button" tabindex="0" onclick="Game.openDeploy(\'' + c.name + '\',\'' + target + '\',null)">' +
     '<span class="name">' + c.name + '</span>' +
-    '<span class="muted">병력 ' + commas(c.troops) + ' · 무장 ' + availableOfficers(c.name).length + '/' + officersIn(c.name).length + '명</span></div>').join('');
+    '<span class="muted">병력 ' + commas(c.troops) + ' · 무장 ' + availableOfficers(c.name).length + '/' + officersIn(c.name).length + '명 · '+forecastText(attackForecast(c.name,target))+'</span></div>').join('');
   showModal('<h3>' + target + ' 공격 — 출진 도시 선택</h3>' + rows +
     '<div class="foot"><button onclick="Game.closeModal()">취소</button></div>');
 }
@@ -3294,8 +3297,8 @@ function renderDeploy() {
       remaining -= per;
       body += '<div class="row"><span class="name"' + portraitAttr(n) + '>' + n + '</span>' +
         '<span class="stats">무력 ' + o.wu + ' · 지력 ' + o.zhi + '</span>' +
-        '<span>병과 <select aria-label="' + n + ' 병과" id="br_' + i + '">' + opt('보병') + opt('기병') + opt('궁병') + '</select></span>' +
-        '<span>진형 <select aria-label="' + n + ' 진형" id="fm_' + i + '" title="' + FORMS[curForm].desc + '">' + Object.keys(FORMS).map(fopt).join('') + '</select></span>' +
+        '<span>병과 <select aria-label="' + n + ' 병과" id="br_' + i + '" onchange="Game.updateDeployTroops()">' + opt('보병') + opt('기병') + opt('궁병') + '</select></span>' +
+        '<span>진형 <select aria-label="' + n + ' 진형" id="fm_' + i + '" title="' + FORMS[curForm].desc + '" onchange="Game.updateDeployTroops()">' + Object.keys(FORMS).map(fopt).join('') + '</select></span>' +
         deploymentTroopControl(n, i, per, Math.min(10000, c.troops)) + '</div>';
     });
     if (d.parts.length > 1) {
@@ -3312,10 +3315,11 @@ function renderDeploy() {
     (d.parts.length > 1 ? '<p class="muted">합류 도시 부대는 본대보다 늦게 도착하며(원군과 같은 행군 일수), 전투가 끝나면 무장과 잔존 병력이 각자 출발 도시로 복귀합니다.</p>' : '') +
     '<p class="muted">진형은 장수마다 따로 지정합니다 — ' +
       Object.keys(FORMS).map(f => '<b>' + f + '</b> ' + FORMS[f].desc).join(' · ') + '</p>' +
-    '<p><label>공략 방식 <select id="battleMode" aria-label="공략 방식" onchange="Game.state.ui.deploy.mode=this.value"><option value="auto"' + (d.mode==='auto'?' selected':'') + '>수비군 판단에 따라 야전 / 공성</option><option value="field"' + (d.mode==='field'?' selected':'') + '>야전 선행</option><option value="siege"' + (d.mode==='siege'?' selected':'') + '>바로 공성</option></select></label></p>' +
+    '<p><label>공략 방식 <select id="battleMode" aria-label="공략 방식" onchange="Game.updateDeployTroops()"><option value="auto"' + (d.mode==='auto'?' selected':'') + '>수비군 판단에 따라 야전 / 공성</option><option value="field"' + (d.mode==='field'?' selected':'') + '>야전 선행</option><option value="siege"' + (d.mode==='siege'?' selected':'') + '>바로 공성</option></select></label></p>' +
     '<p class="muted">야전 승리 후에는 잔존 병력으로 공성을 이어갑니다. 도시 점령은 공성 승리 후 확정됩니다.</p>' +
     '<p><label class="muted"><input type="checkbox" id="autoBattle"' + (d.auto ? ' checked' : '') + '> 자동 전투(지휘 위임)</label></p>' +
     '<p class="muted" id="deploySupplyForecast" aria-live="polite"></p>' +
+    '<p id="deployAttackForecast" aria-live="polite"></p><p class="muted">손실은 지형·지휘·원군에 따라 달라지는 참고 범위입니다. 합류 부대는 행군 지연을 감안합니다.</p>' +
     body +
     (cands.length ? '<div class="cmdgroup"><span class="cg-label">인접 지역 합류 (원군처럼 늦게 도착)</span><div class="cmds c2">' +
       cands.map(c => '<button class="cmd" onclick="Game.addDeployCity(\'' + c.name + '\')"><span>' + c.name + ' 합류</span></button>').join('') +
@@ -3396,6 +3400,14 @@ function captureDeploy(changedIndex) {
   });
   const forecast = $('deploySupplyForecast');
   if (forecast) forecast.textContent = battleSupplyHint(Object.values(totals).reduce((s,n)=>s+n,0));
+  const outlook=$('deployAttackForecast');
+  if(outlook) {
+    const units=(d.rows||[]).map(r=>{
+      const c=G.cities[r.city],o=off(r.name),branch=d.branches[r.name]||autoBranch(o);
+      return {officer:o,troops:d.amounts[r.name]||0,branch,form:d.forms[r.name]||defaultForm(branch),training:c.training,morale:c.morale,delayed:r.city!==d.main};
+    });
+    outlook.textContent=forecastText(attackForecast(d.main,d.target,units,d.mode));
+  }
 }
 function addDeployCity(cityName) {
   const d = G.ui.deploy; if (!d) return;
@@ -4226,6 +4238,8 @@ function battleAiReinforce(req) {
 
 /* ── 전투 결과 반영 ──────────────────────────────────── */
 function applyBattleResult(ctx, res) {
+  ensureCampaignStats(); // 점령 직전 영토도 보존한다.
+  recordCampaignBattle(ctx,res);
   const fAtk = G.factions[ctx.atk] || { name: '재야' };
   const from = G.cities[ctx.from], to = G.cities[ctx.to];
   if (ctx.supply && (ctx.atk===G.pf || ctx.def===G.pf)) {
@@ -4832,7 +4846,7 @@ function aiDepartureReserve(fid,c,exclude) {
 }
 
 function aiRallyPlans(fid,ledger) {
-  const f=G.factions[fid];if((f.quietMonths||0)<4)return [];
+  const f=G.factions[fid];if((f.quietMonths||0)<aiStyle(fid).rally)return [];
   const fronts=factionCities(fid).map(n=>G.cities[n]).filter(c=>aiFrontline(fid,c)&&c.def>=65&&c.training>=75&&officersIn(c.name).length>=2);
   const score=c=>{
     const targets=aiCityThreat(fid,c).enemies;
@@ -4858,7 +4872,10 @@ function aiRallyPlans(fid,ledger) {
 function aiAttackPlan(fid,c,pressure,ledger) {
   if(!availableOfficers(c.name).length||c.troops<2800)return null;
   const f=G.factions[fid],economy=factionEconomy(fid);
+  const style=aiStyle(fid);
   if(c.training<70||c.morale<70||c.def<60)return null;
+  // 축적 성향도 장기 대치에서는 기준을 낮춰 준비만 하다 멈추지 않게 한다.
+  if(c.troops<Math.min(capOf(c)*style.stock*(1-pressure*.35),aiLogisticsCap(fid,c)*.9))return null;
   const targets=c.links.map(n=>G.cities[n]).filter(t=>t.owner!==fid&&!hasPeace(fid,t.owner)&&
     !(t.owner===G.pf&&!automatedFaction(t.owner)&&(G.turn||0)<GRACE_TURNS));
   const priority=t=>t.name===f.warTarget?.city&&f.warTarget.until>G.turn;
@@ -4869,7 +4886,7 @@ function aiAttackPlan(fid,c,pressure,ledger) {
     if(commit<1000)continue;
     const army=aiUnits(c.name,commit,{guard:true});if(!army.length)continue;
     const defenders=defenseUnits(target.name),power=us=>us.reduce((s,u)=>s+unitPower(u,us,{opponents:defenders}),0);
-    const myP=power(army),defP=aiDefensePower(target,army),threshold=1.02+target.def/500-pressure*.22;
+    const myP=power(army),defP=aiDefensePower(target,army),threshold=1.02+target.def/500-pressure*.22+style.caution;
     const extra=[];
     if(myP<=defP*threshold&&(G.turn||0)>=12)for(const src of target.links.map(n=>G.cities[n]).filter(src=>
       src.owner===fid&&src.name!==c.name&&src.training>=70&&src.morale>=70&&src.def>=60&&!(ledger['attack:'+src.name]||ledger['support:'+src.name]))) {
@@ -4892,11 +4909,19 @@ function aiAttackPlan(fid,c,pressure,ledger) {
 /* 명령 하나가 끝날 때마다 새 상태로 후보를 평가한다. 보급·국경 복구를 먼저 하고 성장·출진을 고른다. */
 function aiActionCandidates(fid,ledger={}) {
   const cities=factionCities(fid),f=G.factions[fid],economy=factionEconomy(fid),acts=[];
+  const style=aiStyle(fid);
   if(!cities.length)return acts;
   const budget=Math.max(0,f.gold-Math.max(economy.goldUpkeep,120));
   const foodStress=economy.foodNet<0&&f.food<Math.max(economy.foodUpkeep*3,-economy.foodNet*6);
   const foodNeed=Math.max(economy.foodUpkeep*2,Math.max(0,-economy.foodNet)*4);
-  const add=a=>{const source=a.t==='move'?a.from:a.cn;a.score-=(ledger['city:'+source]||0)*12+(ledger[a.t+':'+source]||0)*16;acts.push(a);};
+  const add=a=>{
+    // 위기 복구 점수(145 이상)는 성향보다 우선한다.
+    if(a.score<145) {
+      const weight=a.t==='attack'?style.attack:a.t==='hr'?style.hr:a.t==='recruit'?style.recruit:a.t==='admin'&&a.stat==='def'?style.defense:1;
+      a.score=Math.min(144,a.score*weight);
+    }
+    const source=a.t==='move'?a.from:a.cn;a.score-=(ledger['city:'+source]||0)*12+(ledger[a.t+':'+source]||0)*16;acts.push(a);
+  };
   if(f.food<foodNeed&&(ledger.buy||0)<2) {
     const cost=Math.min(600,Math.ceil((foodNeed-f.food)/FOOD_BUY_RATE),Math.max(0,f.gold-economy.goldUpkeep));
     if(cost>=50)add({t:'buy',cn:cities[0],cost,score:f.food+economy.foodNet<0?220:foodStress?145:75});
@@ -4912,7 +4937,7 @@ function aiActionCandidates(fid,ledger={}) {
     const reserve=aiGarrisonReserve(fid,c),critical=front&&c.troops<reserve*.55;
     const develop=(stat,score)=>{const admin=pickSorted(cn,o=>adminScore(o,stat))[0];const q=adminQuote(c,stat,[admin.name]);if(q.ok&&q.cost<=budget)add({t:'admin',cn,stat,score});};
     if(c.order<65)develop('order',c.order<45?180:c.order<55?130:85);
-    const defenseTarget=front?(threat.incoming>c.troops?90:75):40;
+    const defenseTarget=front?Math.min(100,(threat.incoming>c.troops?90:75)+(style.defense>1?10:0)):40;
     if(c.def<defenseTarget)develop('def',front?(c.def<50?165:c.def<65?125:85)+(defenseTarget-c.def)*.15:45);
     if(c.agri<100&&(foodStress||economy.foodNet<cities.length*12))develop('agri',foodStress?155:55+(100-c.agri)*.2);
     if(c.comm<100&&economy.goldNet<cities.length*65)develop('comm',economy.goldNet<cities.length*25?135:70+(100-c.comm)*.2);
@@ -4921,7 +4946,7 @@ function aiActionCandidates(fid,ledger={}) {
       const deficit=Math.max(trainTarget-c.training,moraleTarget-c.morale);
       add({t:'train',cn,score:(front?95:40)+deficit*.7+(front&&(c.training<60||c.morale<55)?30:0)});
     }
-    const target=front?Math.min(capOf(c)*.95,Math.max(capOf(c)*.8,reserve)):capOf(c)*.3;
+    const target=front?Math.min(capOf(c)*.95,Math.max(capOf(c)*(style.stock>0 ? .95 : .8),reserve)):capOf(c)*.3;
     if(c.troops<target&&budget>=AI_RECRUIT_GOLD&&(!foodStress||critical)) {
       const quality=front&&c.training>=80&&threat.incoming>=c.troops*.65&&budget>=600;
       const mode=c.recruited||quality?'levy':'conscript';
@@ -5269,11 +5294,12 @@ function monthlyEvents() {
 /* ── 승리/패배 판정 ──────────────────────────────────── */
 function victoryCheck() {
   if (!G || G.over) return;
+  ensureCampaignStats();
   if (!G.pf) {
     const winner = Object.keys(G.factions).find(id => factionCities(id).length === Object.keys(G.cities).length);
     if (!winner) return;
     G.over = true; clearAutoPlay(); sfx('victory'); renderTop();
-    showModal('<h2>천하통일!</h2><p style="text-align:center">' + G.year + '년 ' + G.month + '월 — ' + G.factions[winner].name + '이(가) 모든 도시를 통일했습니다!</p><div class="foot"><button class="primary" onclick="Game.reset()">새 게임</button></div>');
+    showModal('<h2>천하통일!</h2><p style="text-align:center">' + G.year + '년 ' + G.month + '월 — ' + G.factions[winner].name + '이(가) 모든 도시를 통일했습니다!</p>'+campaignSummary(winner,true)+'<div class="foot"><button onclick="Game.openCampaignRecords()">전역 기록</button><button class="primary" onclick="Game.reset()">새 게임</button></div>');
     return;
   }
   const mine = factionCities(G.pf).length;
@@ -5284,11 +5310,11 @@ function victoryCheck() {
     renderTop();
     showModal('<h2>패배</h2>' +
       '<p style="text-align:center">' + G.year + '년 — ' + G.factions[G.pf].name + ' 세력은 역사의 뒤안길로 사라졌습니다.</p>' +
-      '<div class="foot"><button class="primary" onclick="Game.reset()">새 게임</button></div>');
+      campaignSummary()+'<div class="foot"><button onclick="Game.openCampaignRecords()">전역 기록</button><button class="primary" onclick="Game.reset()">새 게임</button></div>');
     return;
   }
   const objective=objectiveStatus();
-  if(objective.failed) {G.over=true;renderTop();sfx('defeat');showModal('<h2>목표 기한 종료</h2><p>'+objective.label+'</p><div class="foot"><button onclick="Game.reset()">새 게임</button></div>');return;}
+  if(objective.failed) {G.over=true;renderTop();sfx('defeat');showModal('<h2>목표 기한 종료</h2><p>'+objective.label+'</p>'+campaignSummary()+'<div class="foot"><button onclick="Game.openCampaignRecords()">전역 기록</button><button onclick="Game.reset()">새 게임</button></div>');return;}
   if (mine === total || objective.done) {
     G.over = true;
     sfx('victory');
@@ -5298,7 +5324,7 @@ function victoryCheck() {
       '<p style="text-align:center">' + G.year + '년 ' + G.month + '월 — ' + G.factions[G.pf].name +
       '이(가) '+(mine===total?total+'개 도시를 모두 손에 넣고 천하를 통일했습니다!':objective.label+' 목표를 달성했습니다!')+'</p>' +
       '<p class="muted" style="text-align:center">재야를 포함한 휘하 무장 ' + offs + '명 · 금 ' + commas(G.factions[G.pf].gold) + '</p>' +
-      '<div class="foot"><button class="primary" onclick="Game.reset()">새 게임</button></div>');
+      campaignSummary(G.pf,true)+'<div class="foot"><button onclick="Game.openCampaignRecords()">전역 기록</button><button class="primary" onclick="Game.reset()">새 게임</button></div>');
   }
 }
 
@@ -5652,6 +5678,7 @@ function restoreSave(data,label) {
     // 구버전 저장 보정
     G.ver = G.ver || 1;
     G.turn = typeof G.turn === 'number' ? G.turn : 12;
+    ensureCampaignStats();
     G.battleActive = false;
     G.aiRunning = false;
     G.ui = {};
@@ -5697,7 +5724,7 @@ function toggleSfx() {
 const Game = {
   boot, startNew, startSpectator, setFullDelegation, toggleAutoPlay, reset, endTurn, chooseScenario,
   openOfficers, officerSort, openDiplo, openHelp,
-  openPolicies,setPolicy,openObjectives,setObjective,diploTruce,diploJoint,diploSurrender,diploAnnex,exportSave,importSave,previewImport,confirmImport,cancelImport,
+  openPolicies,setPolicy,openObjectives,setObjective,openCampaignRecords,diploTruce,diploJoint,diploSurrender,diploAnnex,exportSave,importSave,previewImport,confirmImport,cancelImport,
   saveGame, loadGame, openLoad, toggleBgm, toggleSfx,
   closeModal, togglePick, confirmPick,
   cmdAdmin, cmdRecruit, cmdLevy, cmdTrain, cmdSupply, confirmSupply, cmdSellFood, confirmSellFood, cmdMove, cmdAttack, cmdAttackFrom,
@@ -5715,6 +5742,7 @@ const Game = {
   get state() { return G; },
   get view() { return view; },
   _debug: {
+    aiStyle,attackForecast,forecastText,ensureCampaignStats,recordCampaignBattle,campaignSummary,readCampaignBests,campaignRecordKey,victoryCheck,
     newGame, applyBattleResult, autoResolve, defenseUnits, defenseUnitsFrom, defensePlan, defReinforceCandidates, aiUnits, runFactionAI,
     applyDefReinforce,aiFieldDefense,continueSiege,unitPower,aiDiplomacy,makePact,hasPeace,policyPlan,runPolicies,objectiveStatus,parseSaveFile,validateSave,cityAt,
     aiMovePlans, execAIAct, aiDefensePower, aiFrontline, aiCityThreat, aiGarrisonReserve, aiDepartureReserve, aiRallyPlans, aiActionCandidates, aiAttackPlan, campaignDiplomacy,

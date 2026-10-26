@@ -1,5 +1,115 @@
 /* 외교·위임·선택 목표. 기존 명령/경제 함수를 통해 실행한다. */
 const CITY_POLICIES = {manual:'직접 관리',agri:'농업 중심',comm:'상업 중심',military:'군사 거점',front:'최전선',support:'후방 지원'};
+// 세력 ID가 아닌 현재 군주를 기준으로 한다. 손책→손권 및 신무장 군주도 구분한다.
+const AI_STYLES = {
+  balanced:{label:'균형',attack:1,hr:1,recruit:1,defense:1,caution:0,stock:0,rally:4,diplomacy:1},
+  '조조':{label:'공세·인재 확보',attack:1.12,hr:1.9,recruit:1,defense:1,caution:-.06,stock:0,rally:3,diplomacy:1},
+  '원소':{label:'병력 축적·집중 공세',attack:1.06,hr:1,recruit:1.25,defense:1,caution:.1,stock:.72,rally:2,diplomacy:.9},
+  '유비':{label:'외교·등용',attack:.96,hr:2.2,recruit:1,defense:1,caution:.04,stock:0,rally:4,diplomacy:1.4},
+  '손권':{label:'수비·유리한 전장',attack:.96,hr:1,recruit:1,defense:1.15,caution:.16,stock:0,rally:4,diplomacy:1.15}
+};
+function aiStyle(fid) {return AI_STYLES[G.leaders?.[fid]]||AI_STYLES.balanced;}
+
+/* 공성·원군을 포함한 전력 추정. 난수를 쓰거나 실제 전투/자원을 변경하지 않는다. */
+function attackForecast(from,target,units=null,mode='auto') {
+  const src=G.cities[from],dst=G.cities[target];
+  if(!src||!dst||src.owner===dst.owner||hasPeace(src.owner,dst.owner))return null;
+  if(!units) {
+    const list=availableOfficers(from).slice().sort((a,b)=>PICK_SCORE.attack(b)-PICK_SCORE.attack(a));
+    const counts=distribute(Math.max(0,src.troops-2000),list.length);
+    units=list.map((o,i)=>({officer:o,troops:Math.min(10000,counts[i]),branch:autoBranch(o),form:defaultForm(autoBranch(o)),training:src.training,morale:src.morale}));
+  }
+  units=units.filter(u=>u.troops>0);
+  const total=defenseTroops(units);if(!total)return null;
+  if(dst.troops<=0)return {label:'유리',total,low:0,high:0,empty:true};
+  const defenders=defenseUnits(target);
+  const power=units.reduce((s,u)=>s+unitPower(u,units,{opponents:defenders})*(u.delayed ? .8 : 1),0);
+  const ratio=power/Math.max(1,aiDefensePower(dst,units));
+  const field=mode==='field'||(mode==='auto'&&aiFieldDefense(dst,units));
+  const supply=Math.ceil(total*(field?24:12)/600*expeditionRate({atk:src.owner,to:target},'atk'));
+  const shortage=G.factions[src.owner].food<supply;
+  const assessedRatio=ratio*(shortage ? .75 : 1);
+  const label=assessedRatio>=1.25?'유리':assessedRatio<.8?'불리':'대등';
+  // 간이 판정의 생존율 두 경우에 ±10% 변동을 적용한다. 대등일 때는 양쪽 결과를 포함한다.
+  const share=ratio/(1+ratio),win=.45+.45*share,lose=.15+.5*share;
+  const best=label==='불리'?lose:win,worst=label==='유리'?win:lose;
+  const low=Math.floor(total*Math.max(0,1-best*1.1)/100)*100;
+  const high=Math.min(total,Math.ceil(total*(shortage?1:Math.min(1,1-worst*.9+(field ? .2 : 0)))/100)*100);
+  return {label,total,low,high,ratio,field,shortage};
+}
+function forecastText(p) {
+  if(!p)return '편성 병력 없음';
+  return p.label+' · 아군 예상 손실 '+commas(p.low)+'~'+commas(p.high)+'명'+
+    (p.empty?' · 무주둔 도시':p.shortage?' · 군량 부족 위험':p.field?' · 야전 후 공성 포함':' · 공성 기준');
+}
+function cityAttackForecast(target) {
+  const rows=G.cities[target].links.filter(n=>G.cities[n].owner===G.pf&&availableOfficers(n).length)
+    .map(n=>({from:n,p:attackForecast(n,target)})).filter(r=>r.p);
+  if(!rows.length)return '';
+  return '<div class="enemy-note"><b>공격 전망</b>'+rows.map(r=>'<p>'+r.from+' 출진 '+commas(r.p.total)+'명: '+forecastText(r.p)+'</p>').join('')+
+    '<p class="muted">도시별 2,000명을 남긴 기본 편성 기준. 방어도·훈련·사기·무장·인접 적 원군을 반영한 간이 전력 모델의 참고 범위이며, 지형·지휘·추가 원군에 따라 달라집니다. 출진 편성에서 다시 확인하세요.</p></div>';
+}
+
+/* 전역 기록: 야전→공성은 최종 결과 하나만 집계. 승리 참전 1회 = 전공 1점. */
+const CAMPAIGN_BEST_KEY='sangokji_campaign_best_v1';
+const recordEscape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function ensureCampaignStats(partial=true) {
+  if(!G.stats)G.stats={since:G.turn||0,partial,assisted:!!G.fullDelegation,factions:{},battles:[]};
+  for(const id of Object.keys(G.factions))if(!G.stats.factions[id])G.stats.factions[id]={wins:0,losses:0,peak:0,merit:{}};
+  updateCampaignPeaks();return G.stats;
+}
+function updateCampaignPeaks() {
+  if(!G.stats)return;
+  for(const [id,s] of Object.entries(G.stats.factions))s.peak=Math.max(s.peak,factionCities(id).length);
+}
+function recordCampaignBattle(ctx,res) {
+  if(ctx.statsRecorded)return;
+  const stats=ensureCampaignStats(),winner=res.winner==='attacker'?ctx.atk:ctx.def,loser=winner===ctx.atk?ctx.def:ctx.atk;
+  stats.factions[winner].wins++;stats.factions[loser].losses++;
+  const unopposed=!!(res.autoRetreat||res.preBattleRetreat);
+  if(!unopposed)for(const name of new Set(res[winner===ctx.atk?'atk':'def'].map(u=>u.name).filter(n=>off(n)))) {
+    const merit=stats.factions[winner].merit;merit[name]=(merit[name]||0)+1;
+  }
+  stats.battles.push({turn:G.turn||0,city:ctx.to,atk:ctx.atk,def:ctx.def,winner,unopposed});
+  stats.battles=stats.battles.slice(-30);ctx.statsRecorded=true;
+}
+function campaignRecordKey(fid) {
+  return [G.scenario,fid,G.goal?.type||'unification',G.pf===null?'spectator':G.stats.assisted?'delegated':'player',G.officers.some(o=>o.custom)?'custom':'historical'].join(':');
+}
+function readCampaignBests() {
+  try {
+    const data=JSON.parse(localStorage.getItem(CAMPAIGN_BEST_KEY)||'{}');
+    if(!data||typeof data!=='object'||Array.isArray(data))return {};
+    return Object.fromEntries(Object.entries(data).filter(([k,v])=>/^[\w:]+$/.test(k)&&Number.isInteger(v)&&v>=0&&v<=120000));
+  } catch(e) {return {};}
+}
+function campaignSummary(fid=G.pf,completed=false) {
+  const stats=ensureCampaignStats(),s=stats.factions[fid],months=G.turn||0;
+  const bestOfficers=Object.entries(s.merit).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
+  const rivals=Object.entries(stats.factions).filter(([id])=>id!==fid).sort((a,b)=>b[1].peak-a[1].peak);
+  const top=bestOfficers[0],enemy=rivals[0],key=campaignRecordKey(fid),bests=readCampaignBests();
+  let saved='',best=bests[key];
+  if(completed&&!stats.partial) {
+    if(best===undefined||months<best) {
+      best=months;bests[key]=months;
+      try {localStorage.setItem(CAMPAIGN_BEST_KEY,JSON.stringify(bests));saved=' · 최고 기록 갱신';}
+      catch(e){saved=' · 로컬 기록 저장 실패';}
+    }
+  }
+  return '<div class="sec"><b>전역 통계 · '+recordEscape(G.factions[fid].name)+'</b></div><p>경과 '+months+'개월 · 승전 '+s.wins+'회 / 패전 '+s.losses+'회</p>'+
+    '<p>최다 전공: '+(top?recordEscape(bestOfficers.filter(r=>r[1]===top[1]).map(r=>r[0]).join(' · '))+' ('+top[1]+'점)':'없음')+'</p>'+
+    '<p>최대 영토의 적: '+(enemy&&enemy[1].peak?recordEscape(G.factions[enemy[0]].name)+' ('+enemy[1].peak+'도시)':'없음')+'</p>'+
+    '<p class="muted">승리한 전역 참전 1회당 전공 1점. 무혈 점령·전투 전 후퇴는 전공에서 제외. '+(stats.partial?'이전 기록 없음: '+stats.since+'개월째부터 집계.':'야전과 이어지는 공성은 1회로 집계.')+'</p>'+
+    '<p class="muted">동일 시나리오·세력·목표·운영 방식·신무장 유무의 최단 달성: '+(best===undefined?'없음':best+'개월')+saved+'</p>';
+}
+function openCampaignRecords() {
+  if(!G||G.battleActive||attackIntro)return;
+  const fid=G.pf||Object.keys(G.factions).sort((a,b)=>factionCities(b).length-factionCities(a).length)[0];
+  const stats=ensureCampaignStats();
+  showModal('<h3>전역 기록</h3>'+campaignSummary(fid)+'<h3>최근 주요 전투 (최대 30회)</h3>'+
+    stats.battles.slice().reverse().map(b=>'<p>'+b.turn+'개월째 · '+recordEscape(b.city)+' · '+recordEscape(G.factions[b.atk].name)+' → '+recordEscape(G.factions[b.def].name)+' · '+recordEscape(G.factions[b.winner].name)+' 승리'+(b.unopposed?' (무혈 점령/사전 후퇴)':'')+'</p>').join('')+
+    (!stats.battles.length?'<p class="muted">아직 기록된 전투가 없습니다.</p>':'')+'<div class="foot"><button onclick="Game.closeModal()">닫기</button></div>');
+}
 function strategyReady() {return !!G&&!G.over&&!G.aiRunning&&!G.battleActive&&!attackIntro;}
 function hasPeace(a,b) {return isAlly(a,b)||!!(G.factions[a]?.truces?.[b]>(G.turn||0))||G.factions[a]?.vassalTo===b||G.factions[b]?.vassalTo===a;}
 function makePact(a,b,months=12,type='alliance') {
@@ -26,10 +136,11 @@ function aiDiplomacy() {
     if((a===G.pf&&!automatedFaction(a))||(b===G.pf&&!automatedFaction(b))||hasPeace(a,b)||f.vassalTo||g.vassalTo||(f.diploCooldown||0)>G.turn||(g.diploCooldown||0)>G.turn)continue;
     const border=factionCities(a).some(n=>G.cities[n].links.some(k=>G.cities[k].owner===b));
     const enemies=id=>new Set(factionCities(id).flatMap(n=>G.cities[n].links.map(k=>G.cities[k].owner)).filter(k=>k!==id&&!hasPeace(id,k)));
-    const common=[...enemies(a)].some(k=>k!==b&&enemies(b).has(k)&&factionTotals(k).troops>Math.min(factionTotals(a).troops,factionTotals(b).troops));
+    const willingness=(aiStyle(a).diplomacy+aiStyle(b).diplomacy)/2;
+    const common=[...enemies(a)].some(k=>k!==b&&enemies(b).has(k)&&factionTotals(k).troops>Math.min(factionTotals(a).troops,factionTotals(b).troops)/willingness);
     const exhausted=f.food<factionEconomy(a).foodUpkeep*2&&g.food<factionEconomy(b).foodUpkeep*2;
     const truce=border&&exhausted;
-    if(!truce&&(!common||(f.rel[b]||0)<0))continue;
+    if(!truce&&(!common||(f.rel[b]||0)<-(willingness-1)*40))continue;
     const cost=truce?300:500;
     if(f.gold<cost||g.gold<cost||aiCommands(a)<=0||aiCommands(b)<=0)continue;
     f.gold-=cost;g.gold-=cost;f.commands--;g.commands--;makePact(a,b,truce?6:12,truce?'truce':'alliance');
@@ -118,12 +229,13 @@ function diploAnnex(id) {
   delete G.factions[id].vassalTo;log(G.factions[id].name+'의 영토를 평화적으로 편입했습니다.','good');renderAll();victoryCheck();if(!G.over)openDiplo();
 }
 function openPolicies() {
+  if(G?.over){openCampaignRecords();return;}
   if(!strategyReady()) return;
   const automation = '<h3>' + (G.pf ? '전체위임' : '전체 AI 관전') + '</h3><p class="muted">내정·외교·등용·병력 이동·출진·수비·전투와 다음 달 진행까지 AI가 처리합니다. ' + (G.pf ? '상단 [전체위임 해제]를 누르면 남은 명령권으로 직접 지휘할 수 있습니다.' : '상단 버튼으로 일시정지하거나 재개할 수 있습니다.') + '</p>' +
     (G.pf ? '<button class="primary" onclick="Game.setFullDelegation(' + !G.fullDelegation + ')">' + (G.fullDelegation ? '전체위임 해제 · 직접 지휘' : '전체위임 시작') + '</button>' : '<button class="primary" onclick="Game.toggleAutoPlay()">AI 자동 진행 재개</button>');
   showModal(automation + (G.pf ? '<h3>도시 위임</h3><p class="muted">턴 종료 시 남은 명령권으로 도시당 1회 실행합니다. 직접 명령과 같은 금·무장 행동을 사용합니다. 후방 지원은 인접한 전방 방향 도시로 수송합니다. 전체위임 중에는 AI가 모든 도시의 운영 방침을 결정합니다.</p>'+factionCities(G.pf).map(n=>{
     const c=G.cities[n];return '<div class="row"><b>'+n+'</b><select aria-label="'+n+' 위임 방침" onchange="Game.setPolicy(\''+n+'\',this.value)">'+Object.entries(CITY_POLICIES).map(([id,label])=>'<option value="'+id+'"'+((c.policy||'manual')===id?' selected':'')+'>'+label+'</option>').join('')+'</select><span class="muted" id="policyPreview_'+n+'">'+policyPlan(c).label+'</span></div>';
-  }).join('') : '')+'<div class="foot">' + (G.pf ? '<button onclick="Game.openObjectives()">승리 목표</button>' : '') + '<button onclick="Game.closeModal()">닫기</button></div>');
+  }).join('') : '')+'<h3>군주별 전략 성향</h3>'+Object.keys(G.factions).filter(id=>factionCities(id).length).map(id=>'<p>'+recordEscape(G.leaders?.[id]||G.factions[id].name)+': '+aiStyle(id).label+'</p>').join('')+'<div class="foot"><button onclick="Game.openCampaignRecords()">전역 기록</button>' + (G.pf ? '<button onclick="Game.openObjectives()">승리 목표</button>' : '') + '<button onclick="Game.closeModal()">닫기</button></div>');
 }
 function setPolicy(city,id) {
   if(!strategyReady()||G.cities[city]?.owner!==G.pf||!CITY_POLICIES[id])return;

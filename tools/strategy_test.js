@@ -28,11 +28,14 @@ assert.equal(g.cities['낙양'].owner,'lijue','field victory must not conquer th
 assert.equal(starts.length,2);assert(starts[1].siege);assert.equal(starts[1].def.units[0].troops,3000,'only survivors plus reserve defend the siege');
 assert.equal(starts[1].atk.units.find(u=>u.officer.name==='하후연').troops,300);
 assert.equal(ctx.reinf['하후연'],'진류','arrived reinforcement origins survive the stage transition');
+assert.equal(g.stats.factions.cao.wins,0,'field victory must not count as a separate campaign');
 starts[1].onSupply({round:1,atk:4500,def:3000});
 assert(g.factions.cao.food<paid,'siege round one must not be mistaken for already-paid field round one');
 starts[1].onEnd({winner:'attacker',rounds:1,atk:[row('하후돈',3000),row('하후연',200)],def:[row('이각',1000)],pending:[],captured:[]});
 assert.equal(g.cities['낙양'].owner,'cao');assert.equal(g.cities['낙양'].troops,3000);assert.equal(after,1);
 assert.equal(g.officers.find(o=>o.name==='하후연').city,'진류');
+assert.equal(g.stats.factions.cao.wins,1);assert.equal(g.stats.factions.lijue.losses,1);
+assert.equal(g.stats.factions.cao.merit['하후돈'],1);assert.equal(g.stats.battles.length,1);
 g=fresh();ctx={atk:'cao',def:'lijue',from:'허창',to:'낙양',introShown:true,siege:false,defReserve:400};
 d.beginBattle(ctx,[unit('하후돈',4000)],[unit('이각',4000)],'atk',false);
 starts[0].onEnd({winner:'defender',rounds:3,atk:[row('하후돈',1500)],def:[row('이각',3000)],pending:[],captured:[]});
@@ -124,3 +127,59 @@ assert(Game.previewImport(JSON.stringify(g)));Game.confirmImport();assert.equal(
 g=fresh();Game.setObjective('challenge');assert.equal(g.goal.targets.length,5);g.turn=24;assert(d.objectiveStatus().failed);
 g=fresh();Game.setObjective('hegemony');Object.values(g.cities).forEach((c,i)=>{c.owner=i<24?'cao':'yuan';});g.factions.yuan.vassalTo='cao';assert(d.objectiveStatus().done);
 console.log('[OK] five-scenario JSON roundtrip, invalid import preserves game, preview/confirm, challenge deadline and hegemony victory');
+
+// Forecasts are deterministic estimates of the selected army, never simulated battles.
+g=fresh();g.factions.cao.food=1e6;
+const forecastArmy=[unit('하후돈',6000)];
+const beforeForecast=JSON.stringify(g),outlook=d.attackForecast('허창','낙양',forecastArmy,'siege');
+assert.equal(JSON.stringify(g),beforeForecast);assert.deepEqual(outlook,d.attackForecast('허창','낙양',forecastArmy,'siege'));
+assert(outlook.low>=0&&outlook.high<=6000&&outlook.low<=outlook.high);
+const large=d.attackForecast('허창','낙양',[unit('하후돈',12000)],'siege');assert(large.ratio>outlook.ratio);
+const field=d.attackForecast('허창','낙양',forecastArmy,'field');assert(field.field&&field.high>=outlook.high);
+g.factions.cao.food=0;assert(d.attackForecast('허창','낙양',forecastArmy).shortage);
+g.cities['낙양'].troops=0;assert.equal(d.attackForecast('허창','낙양',forecastArmy).high,0);
+assert.equal(d.attackForecast('허창','낙양',[]),null);
+Game.selectCity('낙양');assert.match(el('cityPanel').innerHTML,/공격 전망/);assert.doesNotMatch(el('cityPanel').innerHTML,/승률/);
+console.log('[OK] forecast purity, deterministic ranges, army strength, field campaign risk, supply warning and enemy-city rendering');
+
+g=fresh();assert.equal(d.aiStyle('cao').label,'공세·인재 확보');assert.equal(d.aiStyle('sunce').label,'균형');
+Game.startNew('cao','208');assert.equal(d.aiStyle('sunce').label,'수비·유리한 전장');
+g=Game.state;g.leaders.cao='새 군주';assert.equal(d.aiStyle('cao').label,'균형');
+g=fresh();const free=g.officers.find(o=>o.faction==='free'&&o.status==='active');assert(free);
+free.city='허창';g.factions.cao.gold=10000;
+g.leaders.cao='조조';const caoHire=d.aiActionCandidates('cao').find(a=>a.t==='hr'&&a.cn==='허창');
+g.leaders.cao='유비';const liuHire=d.aiActionCandidates('cao').find(a=>a.t==='hr'&&a.cn==='허창');
+g.leaders.cao='균형 군주';const plainHire=d.aiActionCandidates('cao').find(a=>a.t==='hr'&&a.cn==='허창');
+assert(liuHire.score>caoHire.score&&caoHire.score>plainHire.score,'talent preferences must change real candidate scores');
+console.log('[OK] current-ruler profiles, Sun Ce/Sun Quan scenario distinction, custom-ruler fallback and actual hiring weights');
+
+g=fresh();g.turn=10;
+const result={winner:'attacker',atk:[row('하후돈',2000)],def:[row('이각',0)]};
+ctx={atk:'cao',def:'lijue',to:'낙양'};d.recordCampaignBattle(ctx,result);d.recordCampaignBattle(ctx,result);
+assert.equal(g.stats.factions.cao.wins,1,'same final result must count once');
+d.recordCampaignBattle({atk:'cao',def:'lijue',to:'낙양'},{...result,autoRetreat:true});
+assert.equal(g.stats.factions.cao.wins,2);assert.equal(g.stats.factions.cao.merit['하후돈'],1,'unopposed occupation grants no combat merit');
+for(let i=0;i<35;i++)d.recordCampaignBattle({atk:'cao',def:'lijue',to:'낙양'},result);
+assert.equal(g.stats.battles.length,30);assert.equal(g.stats.factions.cao.wins,37);
+save=d.parseSaveFile(JSON.stringify(g));assert.equal(save.stats.factions.cao.merit['하후돈'],36);
+save.stats.battles[0].city='<img src=x>';assert.throws(()=>d.parseSaveFile(JSON.stringify(save)));
+save=JSON.parse(JSON.stringify(g));save.stats.factions.cao.merit['하후돈']=-1;assert.throws(()=>d.parseSaveFile(JSON.stringify(save)));
+assert.match(d.campaignSummary('cao',true),/최고 기록 갱신/);
+g.turn=12;d.campaignSummary('cao',true);assert.equal(d.readCampaignBests()[d.campaignRecordKey('cao')],10,'slower finish preserves best');
+g.turn=8;d.campaignSummary('cao',true);assert.equal(d.readCampaignBests()[d.campaignRecordKey('cao')],8);
+const bestKey=d.campaignRecordKey('cao');g.stats.assisted=true;assert.notEqual(d.campaignRecordKey('cao'),bestKey);
+save=JSON.parse(JSON.stringify(g));delete save.stats;save.ver=7;
+assert(Game.previewImport(JSON.stringify(save)));Game.confirmImport();g=Game.state;
+assert(g.stats.partial);assert.equal(g.stats.since,8);assert.equal(g.stats.factions.cao.wins,0);
+assert.doesNotMatch(d.campaignSummary('cao',true),/최고 기록 갱신/,'incomplete old-save history must not enter the record board');
+Game.openCampaignRecords();assert.match(el('modalRoot').innerHTML,/이전 기록 없음/);
+console.log('[OK] single campaign accounting, unopposed merits, bounded history, import validation, best-record ordering/categories and old-save migration');
+
+Game.startNew('cao','200');g=Game.state;g.turn=18;
+Object.values(g.cities).forEach(c=>c.owner='cao');d.victoryCheck();
+assert(g.over);assert.match(el('modalRoot').innerHTML,/천하통일!/);assert.match(el('modalRoot').innerHTML,/경과 18개월/);
+assert.equal(d.readCampaignBests()[d.campaignRecordKey('cao')],18,'real victory must write its scenario record');
+Game.openPolicies();assert.match(el('modalRoot').innerHTML,/전역 기록/,'finished-game records remain accessible');
+g=fresh();Object.values(g.cities).forEach(c=>c.owner='yuan');d.victoryCheck();
+assert(g.over);assert.match(el('modalRoot').innerHTML,/패배/);assert.match(el('modalRoot').innerHTML,/전역 통계/);
+console.log('[OK] actual victory/defeat summaries, scenario best persistence and finished-game records access');
