@@ -25,16 +25,19 @@ const completePresentation=()=>{
 for(const side of ['atk','def']) {
   Game.startNew(side==='atk'?'cao':'lijue','194');timers.length=0;
   const g=Game.state;let completed=0;
+  const city=g.cities['낙양'];Object.assign(city,{def:80,order:80});
   const unit=(name,troops)=>({officer:g.officers.find(o=>o.name===name),troops,branch:'보병',form:'어린',training:80,morale:80});
   const ctx={atk:'cao',def:'lijue',from:'허창',to:'낙양',introShown:true,siege:false,after:()=>completed++};
   Game._debug.beginBattle(ctx,[unit('하후돈',6000)],[unit('이각',4000)],side,false);
   const field=Battle.state,fieldMap=JSON.stringify(field.terrain);
+  assert.equal(city.def,80);assert.equal(city.order,80,'field start must not damage the city');
   assert.equal(field.opts.siege,false);assert.equal(ctx.defReserve,1000);
   assert.equal(field.units.filter(u=>u.side==='def').reduce((s,u)=>s+u.troops,0)+ctx.defReserve,4000,'reserve must conserve troops');
   for(const u of field.units.filter(u=>u.side==='def')) {u.troops=0;u.alive=false;}
   Battle.probe.step();assert.equal(field.winner,'attacker');completePresentation();
   const siege=Battle.state;
   assert(siege&&siege!==field&&siege.opts.siege,'real field victory must open a fresh siege');
+  assert.equal(city.def,80);assert.equal(city.order,80,'transition to siege must not apply damage early');
   assert.equal(g.cities['낙양'].owner,'lijue');assert.equal(completed,0);
   assert.notEqual(JSON.stringify(siege.terrain),fieldMap);
   const defenders=siege.units.filter(u=>u.side==='def');
@@ -49,7 +52,35 @@ for(const side of ['atk','def']) {
     assert.equal(Battle.probe.checkForts(),i===2,'sequential castle flags determine siege victory');
   });
   assert.equal(g.cities['낙양'].owner,'lijue','capture waits for the siege result callback');
+  assert.equal(city.def,80);assert.equal(city.order,80,'siege damage must wait for the result callback');
   completePresentation();
   assert.equal(g.cities['낙양'].owner,'cao');assert.equal(completed,1);assert.equal(Battle.state,null);
+  assert.equal(city.def,48);assert.equal(city.order,48,'field then siege capture applies damage only once');
 }
 console.log('[OK] real field annihilation → separate defended siege → three castle flags → city capture, for both player sides');
+
+for(const side of ['atk','def'])for(const siege of [false,true]) {
+  Game.startNew(side==='atk'?'cao':'lijue','194');timers.length=0;
+  const g=Game.state,city=g.cities['낙양'];Object.assign(city,{def:80,order:80});
+  const unit=(name,troops)=>({officer:g.officers.find(o=>o.name===name),troops,branch:'보병',form:'어린',training:80,morale:80});
+  const ctx={atk:'cao',def:'lijue',from:'허창',to:city.name,introShown:true,siege};
+  Game._debug.beginBattle(ctx,[unit('하후돈',6000)],[unit('이각',4000)],side,false);
+  assert.equal(city.def,80);assert.equal(city.order,80,'battle start must preserve city stats');
+  const battle=Battle.state;
+  for(const u of battle.units.filter(u=>u.side==='atk')){u.troops=0;u.alive=false;}
+  Battle.probe.step();assert.equal(battle.winner,'defender');
+  assert.equal(city.def,80);assert.equal(city.order,80,'damage waits until the campaign receives the result');
+  completePresentation();
+  assert.equal(city.owner,'lijue');assert.equal(Battle.state,null);
+  assert.equal(city.def,siege?72:80);assert.equal(city.order,siege?72:80);
+}
+console.log('[OK] real field interception preserves city stats; defended siege damages them only after the result, for both player sides');
+
+for(const flag of ['autoRetreat','preBattleRetreat']) {
+  Game.startNew('cao','194');timers.length=0;
+  const g=Game.state,city=g.cities['낙양'];Object.assign(city,{def:80,order:80});
+  Game._debug.applyBattleResult({atk:'cao',def:'lijue',from:'허창',to:city.name,siege:true},
+    {winner:'attacker',atk:[{name:'하후돈',troops:6000}],def:[],captured:[],[flag]:true});
+  assert.equal(city.owner,'cao');assert.equal(city.def,80);assert.equal(city.order,80);
+}
+console.log('[OK] automatic and voluntary pre-battle retreats preserve city stats');

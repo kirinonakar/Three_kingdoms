@@ -14,7 +14,7 @@ const sandbox = {console, Math:math, document:{getElementById:el,querySelectorAl
   setTimeout:()=>0,clearTimeout:noop,confirm:()=>true};
 sandbox.window = sandbox; vm.createContext(sandbox);
 vm.runInContext(['data.js','combat-rules.js','strategy-systems.js','save-transfer.js','game.js'].map(f=>fs.readFileSync(path.join(root,'js',f),'utf8')).join('\n')+
-  '\nthis.scenarios=SCENARIOS;',sandbox);
+  '\nthis.scenarios=SCENARIOS;this.citySize=citySize;',sandbox);
 const {Game} = sandbox, d = Game._debug;
 const fresh = () => { Game.startNew('cao','194'); return Game.state; };
 const pick = name => { Game.togglePick(name); Game.confirmPick(); };
@@ -136,6 +136,37 @@ g=fresh();c=g.cities['허창'];f=g.factions.cao;
 Object.assign(c,{troops:1000000,morale:90,agri:100,comm:0,order:0});f.gold=0;
 d.monthlyProcess();assert.equal(f.gold,0);assert(c.morale<90);assert(f.food>=0);
 console.log('[OK] forecast equals settlement, marginal over-cap upkeep, production/order effects, proportional starvation, unpaid wages');
+
+// 월 정산의 인구 변화는 난수 없이 치안에 비례하고, 플레이어·AI에 똑같이 적용한다.
+for(let order=0;order<=100;order++) {
+  g=fresh();c=g.cities['허창'];const aiCity=g.cities['업'];
+  assert.notEqual(aiCity.owner,g.pf);
+  for(const city of [c,aiCity])Object.assign(city,{pop:10,order});
+  d.monthlyProcess();
+  for(const city of [c,aiCity]) {
+    assert.equal(Math.round(city.pop*1000),10000+order-30,'population must track every order point: '+order);
+  }
+}
+g=fresh();c=g.cities['허창'];Object.assign(c,{pop:0.011,order:0});
+d.monthlyProcess();assert.equal(c.pop,0.01,'population must not fall below the save-compatible minimum');
+d.monthlyProcess();assert.equal(c.pop,0.01);
+g=fresh();c=g.cities['허창'];Object.assign(c,{pop:10,order:31});
+for(let month=0;month<100;month++)d.monthlyProcess();
+assert.equal(c.pop,10.1,'small monthly changes must accumulate without rounding away');
+for(const [pop,order,beforeRank,afterRank,afterPop] of [
+  [8.999,31,1,2,9],[9,29,2,1,8.999],
+  [13.999,31,2,3,14],[14,29,3,2,13.999]
+]) {
+  g=fresh();c=g.cities['허창'];Object.assign(c,{pop,order});
+  assert.equal(sandbox.citySize(c).rank,beforeRank);
+  const cap=d.capOf(c);
+  d.monthlyProcess();assert.equal(c.pop,afterPop);
+  assert.equal(sandbox.citySize(c).rank,afterRank,'city size must follow population across both thresholds');
+  assert(order>30?d.capOf(c)>cap:d.capOf(c)<cap,'troop cap must follow current population');
+  Game.selectCity(c.name);
+  assert(el('cityPanel').innerHTML.includes('>'+sandbox.citySize(c).label+'</span>'),'city panel must show updated size');
+}
+console.log('[OK] monthly population: all order levels, AI parity, minimum, accumulation, size upgrades/downgrades and live panel/caps');
 
 g=fresh();c=g.cities['허창'];f=g.factions.cao;f.food=0;
 g.officers.filter(o=>o.city===c.name).forEach(o=>o.used=true);
