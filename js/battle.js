@@ -3556,17 +3556,13 @@ const Battle = (function () {
     const acts = $('bActs');
     if (acts) {
       const can = !!u && !u.acted && !isConfused(u) && B.side === B.playerSide && !B.auto && !B.busy && !B.over;
-      const okMove = can && !u.moved && moveRange(u).length > 0;
-      const okAtk = can && attackTargets(u).length > 0;
       const okStrat = can && STRATS.some(s => stratTargets(u, s).length > 0);
       const okDuel = can && duelTargets(u).length > 0;
       const okCharge = can && !u.moved && u.branch === '기병' && chargeOptions(u).length > 0;
       const okVolley = can && u.branch === '보병' && volleyTargets(u).length > 0;
       const okFire = can && u.branch === '궁병' && fireLeft(u) > 0 && fireTargets(u).length > 0;
       const btn = (cmd, ico, label, ok) => '<button aria-label="' + label + '" onclick="Battle.act(\'' + cmd + '\')"' + (ok ? '' : ' disabled') + '><i class="ico">' + ico + '</i><span>' + label + '</span></button>';
-      let h = btn('move', '移', '이동', okMove) +
-        btn('atk', '攻', '공격', okAtk) +
-        (u && u.branch === '기병' ? btn('charge', '突', '돌격', okCharge) : '') +
+      let h = (u && u.branch === '기병' ? btn('charge', '突', '돌격', okCharge) : '') +
         (u && u.branch === '보병' ? btn('volley', '齊', '일제공격', okVolley) : '') +
         (u && u.branch === '궁병' ? btn('fire', '火', '불화살', okFire) : '') +
         btn('strat', '策', '계략', okStrat) +
